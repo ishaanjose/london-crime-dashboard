@@ -25,3 +25,6 @@ all_data.to_csv('all_data2.csv')
 
 crimes = pd.read_csv('all_data2.csv', usecols=['month','longitude','latitude','crime_type', 'lsoa'])
 crimes.to_sql('crimes', con, if_exists='append',index=False)
+ 
+
+# DELETE FROM crimes WHERE longitude IS NULL OR latitude IS NULL;
