@@ -16,13 +16,12 @@ app = FastAPI(
     version = '2.0.0',
 )
 
-# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # This line says "I allow requests from ANY origin"
+    allow_origins=["*"],  
     allow_credentials=True,
-    allow_methods=["*"],  # Allows any method (GET, POST, etc.)
-    allow_headers=["*"],  # Allows any headers
+    allow_methods=["*"],  
+    allow_headers=["*"],  
 )
 
 try:
@@ -45,79 +44,215 @@ def read_root():
     return {"message": "Welcome to the Crime Data API v2! Use /docs to see endpoints."}
 
 
-
-@app.get("/month_crimes")
-def get_month_crimes(
-    date: str,
-    crime_type: Optional[str]=None,
-):
-    """
-    Get crime data for a specific month.
-    - date: The month to fetch data for (e.g., '2025-01').
-    """
-
-    conn = db_connection()
-    if not conn:
-        raise HTTPException(status_code=500, detail="Database connection failed.")
-
-    query = f"SELECT latitude, longitude, crime_type, month FROM {TABLE_NAME} WHERE month = ?"
-    params = [date]
-
-    if crime_type:
-        query += f'AND crime_type = ?'
-        params.append(crime_type)
-
-
-
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    
-    # Convert the DataFrame to a dictionary before returning.
-    return df.to_dict('records')
-
-@app.get("/monthrange_crimes")
-def get_range_crimes(
-    start_d: str,
-    end_d: str,
-    crime_type: Optional[str]=None,
+@app.get("/crimes")
+def get_crimes(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    specific_month: Optional[str] = None,
+    crime_type: Optional[str] = None,
+    borough: Optional[str] = None,
 
 ):
     """
-    Get crime data within a specific month range.
-    - start_d: The start month of the range
-    - end_d: The end month of the range
+    Get crime data, filtered by an optional date range, crime type, and borough.
+    - To query a single month, set start_date and end_date to the same value (e.g., '2025-01').
     """
-    
     conn = db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed.")
     
-    query = f"SELECT latitude, longitude, crime_type, month FROM {TABLE_NAME} WHERE month>=? AND month<= ?"
-    params = [start_d,end_d]
+    conn.row_factory = sqlite3.Row
+
+    query = f"SELECT latitude, longitude, crime_type, month, borough FROM {TABLE_NAME}"
+    where_clauses = []
+    params = []
+
+    if start_date:
+        where_clauses.append("month >= ?")
+        params.append(start_date)
+    
+    if end_date:
+        where_clauses.append("month <= ?")
+        params.append(end_date)
+
+    if specific_month:
+        where_clauses.append("month = ?")
+        params.append(specific_month)
 
     if crime_type:
-        query += f'AND crime_type = ?'
+        where_clauses.append("crime_type = ?")
         params.append(crime_type)
 
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
+    if borough:
+        where_clauses.append("borough = ?")
+        params.append(borough)
 
-    return df.to_dict('records')
+    if where_clauses:
+        query += " WHERE " + " AND ".join(where_clauses)
+    
+
+
+    cursor = conn.cursor()
+    cursor.execute(query, tuple(params))
+    results = cursor.fetchall()
+    conn.close()
+    
+    return results
+
+
+@app.get('/boroughs')
+def get_borough_list():
+    """
+    Gets the list of available London boroughs from the database.
+    """
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    
+    query = f"SELECT DISTINCT borough FROM {TABLE_NAME} WHERE borough IS NOT NULL ORDER BY borough"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    # FIX: Return a dictionary, not a list
+    return {"boroughs": df['borough'].tolist()}
+
+
+@app.get("/summary")
+def get_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    crime_type: Optional[str] = None,
+    borough: Optional[str] = None,
+):
+    """
+    Get a summary of crime data, including total crimes and a breakdown by type.
+    """
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    
+    conn.row_factory = sqlite3.Row
+
+    where_clauses = []
+    params = []
+
+    if start_date:
+        where_clauses.append("month >= ?")
+        params.append(start_date)
+    
+    if end_date:
+        where_clauses.append("month <= ?")
+        params.append(end_date)
+
+    if crime_type:
+        where_clauses.append("crime_type = ?")
+        params.append(crime_type)
+
+    if borough:
+        where_clauses.append("borough = ?")
+        params.append(borough)
+
+    where_query_part = ""
+    if where_clauses:
+        where_query_part = " WHERE " + " AND ".join(where_clauses)
+    
+    cursor = conn.cursor()
+
+    total_count_query = f"SELECT COUNT(*) FROM {TABLE_NAME}" + where_query_part
+    cursor.execute(total_count_query, tuple(params))
+    total_crimes = cursor.fetchone()[0]
+
+    crime_counts_by_type = {}
+    
+    if not crime_type:
+        breakdown_query = f"SELECT crime_type, COUNT(*) as count FROM {TABLE_NAME}" + where_query_part + " GROUP BY crime_type ORDER BY count DESC"
+        cursor.execute(breakdown_query, tuple(params))
+        rows = cursor.fetchall()
+        crime_counts_by_type = {row['crime_type']: row['count'] for row in rows}
+
+    conn.close()
+    
+    return {
+        "total_crimes": total_crimes,
+        "crime_counts_by_type": crime_counts_by_type
+    }
+
+@app.get("/trends")
+def get_trends(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    crime_type: Optional[str] = None,
+    borough: Optional[str] = None,
+    breakdown_by_type: bool = False
+):
+    """
+    Get a time-series trend of crime counts.
+    - Set breakdown_by_type=true to get counts for each crime type.
+    """
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    
+    conn.row_factory = sqlite3.Row
+
+    where_clauses = []
+    params = []
+
+    if start_date:
+        where_clauses.append("month >= ?")
+        params.append(start_date)
+    
+    if end_date:
+        where_clauses.append("month <= ?")
+        params.append(end_date)
+
+    if crime_type:
+        where_clauses.append("crime_type = ?")
+        params.append(crime_type)
+
+    if borough:
+        where_clauses.append("borough = ?")
+        params.append(borough)
+
+    where_query_part = ""
+    if where_clauses:
+        where_query_part = " WHERE " + " AND ".join(where_clauses)
+    
+    cursor = conn.cursor()
+
+    if not breakdown_by_type:
+        query = f"SELECT month, COUNT(*) as count FROM {TABLE_NAME}" + where_query_part + " GROUP BY month ORDER BY month"
+        cursor.execute(query, tuple(params))
+        results = cursor.fetchall()
+    else:
+        query = f"SELECT month, crime_type, COUNT(*) as count FROM {TABLE_NAME}" + where_query_part + " GROUP BY month, crime_type ORDER BY month, crime_type"
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        
+        trends_by_type = {}
+        for row in rows:
+            trends_by_type.setdefault(row['crime_type'], []).append({
+                "month": row['month'],
+                "count": row['count']
+            })
+        results = trends_by_type
+
+    conn.close()
+    return results
+
+
 
 @app.get('/crime_types')
 def get_types():
     """
     Get the different types of crimes.
     """
-
     conn = db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed.")
     
-    query = f"SELECT DISTINCT crime_type FROM {TABLE_NAME}"
-
-    df = pd.read_sql_query(query,conn)
+    query = f"SELECT DISTINCT crime_type FROM {TABLE_NAME} ORDER BY crime_type"
+    df = pd.read_sql_query(query, conn)
     conn.close()
-
-    return df.to_dict('records')
-
+    
+    return {"crime_types": df['crime_type'].tolist()}
