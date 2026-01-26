@@ -5,7 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import pandas as pd
-import json 
+import json
+from dash import callback_context 
 
 # --- Configuration ---
 API_BASE_URL = "http://127.0.0.1:8000"  
@@ -26,6 +27,7 @@ except json.JSONDecodeError:
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUX])
 server = app.server
 
+# Add a Store component to cache the fetched data
 def create_filter_card():
     """Creates the card containing all filters."""
     return dbc.Card(
@@ -66,7 +68,7 @@ def create_filter_card():
             
             # Update Button
             dbc.Button("Apply Filters", id="apply-filters-button", color="primary", className="w-100"),
-            
+
             # Placeholders for the custom legend
             html.Hr(className="my-4"),
             html.H5("Legend", id="legend-title", className="card-title"),
@@ -83,6 +85,7 @@ def create_filter_card():
         ]),
         className="shadow-sm border-0"
     )
+
 
 def create_map_card():
     """Creates the card for the main map."""
@@ -129,6 +132,8 @@ def create_pie_chart_card():
     )
 
 app.layout = dbc.Container([
+    dcc.Store(id='cached-crime-data'),  # Add this to cache raw crime data
+    dcc.Store(id='cached-borough-data'),  # Add this to cache borough summary
     dbc.Row([
         dbc.Col(create_filter_card(), md=4),
         dbc.Col(create_map_card(), md=8),
@@ -168,22 +173,26 @@ def populate_crime_types(_):
         print(f"Error fetching crime types: {e}")
         return []
 
+# Combined callback: fetch data, render map, and cache in one step
 @app.callback(
     [Output('crime-map', 'figure'),
      Output('legend-title', 'children'),
-     Output('legend-container', 'children')],
+     Output('legend-container', 'children'),
+     Output('cached-crime-data', 'data'),
+     Output('cached-borough-data', 'data')],
     [Input('apply-filters-button', 'n_clicks'),
      Input('map-type-selector', 'value')],
     [State('date-picker-range', 'start_date'),
      State('date-picker-range', 'end_date'),
      State('borough-dropdown', 'value'),
-     State('crime-type-dropdown', 'value')],
+     State('crime-type-dropdown', 'value'),
+     State('cached-crime-data', 'data'),
+     State('cached-borough-data', 'data')],
     prevent_initial_call=True
 )
-def update_map_and_legend(n_clicks, map_type, start_date, end_date, boroughs, crime_types):
-    """Fetches data from the appropriate endpoint to update the map."""
+def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, crime_types, cached_crime_data, cached_borough_data):
+    """Fetch data on filter click OR use cache on view switch - render immediately!"""
     
-    # Set a default empty map
     empty_map_fig = go.Figure(go.Scattermapbox())
     empty_map_fig.update_layout(
         mapbox_style="carto-positron",
@@ -193,34 +202,56 @@ def update_map_and_legend(n_clicks, map_type, start_date, end_date, boroughs, cr
         margin={"r":0,"t":40,"l":0,"b":0}
     )
     
-    if not start_date or not end_date:
-        return (empty_map_fig, "Legend", [])
-
-    params = {'start_date': start_date, 'end_date': end_date} 
-    if boroughs:
-        params['borough'] = boroughs
-    if crime_types:
-        params['crime_type'] = crime_types
-
-    if map_type == 'choropleth':
-        if borough_geojson is None:
-            empty_map_fig.update_layout(title="Error: Borough GeoJSON file not loaded.")
-            return (empty_map_fig, "Legend", [])
+    # Determine what triggered this callback
+    ctx = callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+    
+    # If triggered by apply-filters-button, fetch fresh data
+    if triggered_id == 'apply-filters-button':
+        if not start_date or not end_date:
+            return (empty_map_fig, "Legend", [], None, None)
         
+        params = {'start_date': start_date, 'end_date': end_date}
+        if boroughs:
+            params['borough'] = boroughs
+        if crime_types:
+            params['crime_type'] = crime_types
+        
+        # Fetch crime data for dot map
+        crime_data = None
+        try:
+            params_crime = params.copy()
+            params_crime['limit'] = 20000
+            response = requests.get(f"{API_BASE_URL}/crimes", params=params_crime)
+            response.raise_for_status()
+            crime_data = response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching crimes: {e}")
+        
+        # Fetch borough summary for choropleth
+        borough_data = None
         try:
             response = requests.get(f"{API_BASE_URL}/summary_by_borough", params=params)
             response.raise_for_status()
-            api_data = response.json()
+            borough_data = response.json()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching /summary_by_borough data: {e}")
-            return (empty_map_fig, "Legend", [])
+            print(f"Error fetching borough summary: {e}")
+    else:
+        # Triggered by map-type-selector, use cached data
+        crime_data = cached_crime_data
+        borough_data = cached_borough_data
+    
+    if map_type == 'choropleth':
+        if borough_geojson is None:
+            empty_map_fig.update_layout(title="Error: Borough GeoJSON file not loaded.")
+            return (empty_map_fig, "Legend", [], cached_crime_data, cached_borough_data)
         
-        if not api_data:
-            empty_map_fig.update_layout(title="No data found for the selected filters")
-            return (empty_map_fig, "Legend", [])
+        if not borough_data:
+            empty_map_fig.update_layout(title="No data - click Apply Filters")
+            return (empty_map_fig, "Legend", [], cached_crime_data, cached_borough_data)
         
-        df = pd.DataFrame(api_data)
-
+        df = pd.DataFrame(borough_data)
+        
         fig_map = px.choropleth_mapbox(
             df,
             geojson=borough_geojson,
@@ -238,23 +269,13 @@ def update_map_and_legend(n_clicks, map_type, start_date, end_date, boroughs, cr
         fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
         legend_title = "Choropleth Legend"
         legend_content = html.P("Green = Low crime, Red = High crime", className="text-muted small")
-
-    else: # Default to 'dot' map
-        params['limit'] = 20000
-        try:
-            response = requests.get(f"{API_BASE_URL}/crimes", params=params)
-            response.raise_for_status()
-            api_data = response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching /crimes data: {e}")
-            return (empty_map_fig, "Legend", [])
-
-        if not api_data:
-            empty_map_fig.update_layout(title="No data found for the selected filters")
-            return (empty_map_fig, "Legend", [])
         
-        df = pd.DataFrame(api_data)
+    else:  # dot map
+        if not crime_data:
+            empty_map_fig.update_layout(title="No data - click Apply Filters")
+            return (empty_map_fig, "Legend", [], cached_crime_data, cached_borough_data)
         
+        df = pd.DataFrame(crime_data)
         unique_crime_types = sorted(df['crime_type'].unique())
         color_scale = px.colors.qualitative.Plotly
         
@@ -269,7 +290,7 @@ def update_map_and_legend(n_clicks, map_type, start_date, end_date, boroughs, cr
         
         legend_title = f"Legend ({len(unique_crime_types)} types)"
         legend_content = legend_items
-
+        
         fig_map = px.scatter_mapbox(
             df,
             lat="latitude",
@@ -283,12 +304,9 @@ def update_map_and_legend(n_clicks, map_type, start_date, end_date, boroughs, cr
             center={"lat": df['latitude'].mean(), "lon": df['longitude'].mean()},
             title=f"Displaying {len(df)} Crime Incidents"
         )
-        fig_map.update_layout(
-            margin={"r":0,"t":40,"l":0,"b":0},
-            showlegend=False
-        )
+        fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, showlegend=False)
     
-    return (fig_map, legend_title, legend_content)
+    return (fig_map, legend_title, legend_content, crime_data, borough_data)
 
 @app.callback(
     Output('crime-pie-chart', 'figure'),
