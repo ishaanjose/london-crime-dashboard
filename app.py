@@ -92,7 +92,7 @@ def create_map_card():
                 id="map-type-selector",
                 options=[
                     {"label": "Dot Map", "value": "dot"},
-                    {"label": "Choropleth Map", "value": "choropleth"},p
+                    {"label": "Choropleth Map", "value": "choropleth"},
                 ],
                 value="dot", 
                 inline=True,
@@ -172,15 +172,15 @@ def populate_crime_types(_):
     [Output('crime-map', 'figure'),
      Output('legend-title', 'children'),
      Output('legend-container', 'children')],
-    Input('apply-filters-button', 'n_clicks'),
+    [Input('apply-filters-button', 'n_clicks'),
+     Input('map-type-selector', 'value')],
     [State('date-picker-range', 'start_date'),
      State('date-picker-range', 'end_date'),
      State('borough-dropdown', 'value'),
-     State('crime-type-dropdown', 'value'),
-     State('map-type-selector', 'value')],
+     State('crime-type-dropdown', 'value')],
     prevent_initial_call=True
 )
-def update_map_and_legend(n_clicks, start_date, end_date, boroughs, crime_types, map_type):
+def update_map_and_legend(n_clicks, map_type, start_date, end_date, boroughs, crime_types):
     """Fetches data from the appropriate endpoint to update the map."""
     
     # Set a default empty map
@@ -224,10 +224,11 @@ def update_map_and_legend(n_clicks, start_date, end_date, boroughs, crime_types,
         fig_map = px.choropleth_mapbox(
             df,
             geojson=borough_geojson,
-            locations='borough',    # Column in df
-            featureidkey='properties.BOROUGH', # Key in geojson
+            locations='borough',
+            featureidkey='properties.BOROUGH',
             color='count',
-            color_continuous_scale="Viridis",
+            color_continuous_scale=[[0, "green"], [0.5, "yellow"], [1, "red"]],
+            range_color=[df['count'].min(), df['count'].quantile(0.95)],
             mapbox_style="carto-positron",
             zoom=8.5,
             center={"lat": 51.5074, "lon": -0.1278},
@@ -236,10 +237,10 @@ def update_map_and_legend(n_clicks, start_date, end_date, boroughs, crime_types,
         )
         fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
         legend_title = "Choropleth Legend"
-        legend_content = html.P("Color intensity shows total crime count by borough.", className="text-muted small")
+        legend_content = html.P("Green = Low crime, Red = High crime", className="text-muted small")
 
     else: # Default to 'dot' map
-        params['limit'] = 20000 # Add limit only for dot map
+        params['limit'] = 20000
         try:
             response = requests.get(f"{API_BASE_URL}/crimes", params=params)
             response.raise_for_status()
@@ -284,7 +285,7 @@ def update_map_and_legend(n_clicks, start_date, end_date, boroughs, crime_types,
         )
         fig_map.update_layout(
             margin={"r":0,"t":40,"l":0,"b":0},
-            showlegend=False # Disable the default Plotly legend
+            showlegend=False
         )
     
     return (fig_map, legend_title, legend_content)
@@ -343,7 +344,6 @@ def update_pie_chart(n_clicks, start_date, end_date, boroughs, crime_types):
         empty_layout["layout"]["annotations"][0]["text"] = "No data found for this selection"
         return empty_layout
 
-    # --- AESTHETIC FIX: Use go.Pie as requested ---
     labels = df['crime_type']
     values = df['count']
     
@@ -354,7 +354,6 @@ def update_pie_chart(n_clicks, start_date, end_date, boroughs, crime_types):
     # Create a mapping from crime_type to its color
     color_map = {crime: color_scale[i % len(color_scale)] for i, crime in enumerate(all_crime_types)}
     
-    # Apply colors based on the *sorted* dataframe
     df_colors = [color_map.get(crime, '#808080') for crime in df['crime_type']] # .get for safety
 
 

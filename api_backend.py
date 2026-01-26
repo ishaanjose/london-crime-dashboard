@@ -177,6 +177,61 @@ def get_summary(
         "crime_counts_by_type": crime_counts_by_type
     }
 
+
+@app.get('/summary_by_borough')
+def get_summary_by_borough(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    crime_type: Optional[str] = None,
+    borough: Optional[str] = None,
+):
+    """
+    Get crime counts grouped by borough for cholorpleth mapping.
+    """
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    conn.row_factory = sqlite3.Row
+
+    where_clauses = []
+    params = []
+
+    if start_date:
+        where_clauses.append("month >= ?")
+        params.append(start_date)
+    
+    if end_date:
+        where_clauses.append("month <= ?")
+        params.append(end_date)
+    
+    if crime_type:
+        where_clauses.append("crime_type = ?")
+        params.append(crime_type)
+
+    if borough:
+        where_clauses.append("borough = ?")
+        params.append(borough)
+
+    where_query_part = ""
+    if where_clauses:
+        where_query_part = " WHERE " + " AND ".join(where_clauses)
+
+
+    # Ensure we only count records with a valid borough
+    if where_query_part:
+        where_query_part += " AND borough IS NOT NULL"
+    else:
+        where_query_part += " WHERE borough IS NOT NULL"
+
+    cursor = conn.cursor()
+
+    query = f"SELECT borough, COUNT(*) as count FROM {TABLE_NAME}" + where_query_part + " GROUP BY borough ORDER BY count DESC"
+    cursor.execute(query, tuple(params))
+    results = cursor.fetchall()
+    conn.close()
+
+    # Return as a list of dictionaries
+    return [{'borough': row['borough'], 'count': row['count']} for row in results]
 @app.get("/trends")
 def get_trends(
     start_date: Optional[str] = None,
