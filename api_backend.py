@@ -311,3 +311,109 @@ def get_types():
     conn.close()
     
     return {"crime_types": df['crime_type'].tolist()}
+
+
+@app.get("/imd_scatter")
+def get_imd_scatter():
+    """Return IMD vs annualised crime rate per 1000 residents at LSOA level.
+    """
+
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        span_query = "SELECT (julianday(MAX(month) || '-01') - julianday(MIN(month) || '-01')) / 365.25 as span FROM crimes"
+        cursor.execute(span_query)
+        row = cursor.fetchone()
+        raw_span = row["span"] if row and row["span"] is not None else None
+        span_years = raw_span if raw_span and raw_span > 0 else 1.0
+    except Exception:
+        span_years = 1.0
+
+    #  normalized annual crime rate per 1000 residents for each LSOA
+    try:
+        query = f"""
+            SELECT 
+                s.lsoa_code,
+                c.borough,
+                AVG(c.imd_rank) as imd_rank,
+                AVG(c.imd_decile) as imd_decile,
+                ((CAST(COUNT(*) AS FLOAT) / {span_years}) / s.population) * 1000 as annual_rate_per_1000
+            FROM crimes c
+            JOIN lsoa_stats s ON c.lsoa = s.lsoa_code
+            WHERE c.imd_rank IS NOT NULL
+              AND s.population >= 500
+              AND c.borough IS NOT NULL
+            GROUP BY s.lsoa_code, c.borough
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+    except sqlite3.Error as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying IMD scatter data: {e}")
+
+    conn.close()
+
+    scatter_data = []
+    for r in rows:
+        if r["imd_rank"] is None or r["annual_rate_per_1000"] is None:
+            continue
+        scatter_data.append({
+            "lsoa_code": r["lsoa_code"],
+            "borough": r["borough"],
+            "imd_rank": r["imd_rank"],
+            "imd_decile": r["imd_decile"],
+            "annual_rate_per_1000": r["annual_rate_per_1000"],
+        })
+
+    return scatter_data
+
+
+@app.get("/imd_deciles")
+def get_imd_deciles():
+    """Return mean annual crime rate per 1000 residents by IMD decile.
+    """
+
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        query = """
+            SELECT 
+                t.imd_decile AS decile,
+                AVG(s.annual_crime_rate_per_1000) AS avg_rate
+            FROM lsoa_stats s
+            JOIN (
+                SELECT DISTINCT lsoa, imd_decile 
+                FROM crimes 
+                WHERE imd_decile IS NOT NULL
+            ) t ON s.lsoa_code = t.lsoa
+            GROUP BY t.imd_decile
+            ORDER BY t.imd_decile ASC
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+    except sqlite3.Error as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying IMD decile data: {e}")
+
+    conn.close()
+
+    deciles = []
+    for r in rows:
+        if r["decile"] is None or r["avg_rate"] is None:
+            continue
+        deciles.append({
+            "imd_decile": int(r["decile"]),
+            "avg_rate": r["avg_rate"],
+        })
+
+    return deciles

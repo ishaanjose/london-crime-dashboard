@@ -114,17 +114,30 @@ def create_map_card():
         className="shadow-sm border-0"
     )
 
-def create_pie_chart_card():
-    """Creates the card for the crime type pie chart."""
+def create_analysis_card():
+    """Creates the card for the analysis charts (pie, trend, borough, deprivation)."""
     return dbc.Card(
         dbc.CardBody([
+            html.H4("Crime Analysis", className="card-title mb-3"),
+            dbc.RadioItems(
+                id="analysis-view-selector",
+                options=[
+                    {"label": "Crime Breakdown", "value": "pie"},
+                    {"label": "Time Trend", "value": "time_trend"},
+                    {"label": "Borough Comparison", "value": "borough"},
+                    {"label": "Deprivation Link", "value": "deprivation"},
+                ],
+                value="pie",
+                inline=True,
+                className="mb-3",
+            ),
             dcc.Loading(
-                id="loading-pie-chart",
+                id="loading-analysis",
                 type="default",
                 children=dcc.Graph(
-                    id='crime-pie-chart',
+                    id='analysis-chart',
                     figure={},
-                    style={'height': '40vh'}
+                    style={'height': '45vh'}
                 )
             )
         ]),
@@ -139,7 +152,7 @@ app.layout = dbc.Container([
         dbc.Col(create_map_card(), md=8),
     ]),
     dbc.Row([
-        dbc.Col(create_pie_chart_card(), md=12, className="mt-4"), 
+        dbc.Col(create_analysis_card(), md=12, className="mt-4"), 
     ], className="mb-4"),
 ], fluid=True, className="bg-light p-4")
 
@@ -202,7 +215,6 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
         margin={"r":0,"t":40,"l":0,"b":0}
     )
     
-    # Determine what triggered this callback
     ctx = callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
     
@@ -309,12 +321,13 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
     return (fig_map, legend_title, legend_content, crime_data, borough_data)
 
 @app.callback(
-    Output('crime-pie-chart', 'figure'),
-    Input('cached-crime-data', 'data')
+    Output('analysis-chart', 'figure'),
+    [Input('analysis-view-selector', 'value'),
+     Input('cached-crime-data', 'data')]
 )
-def update_pie_chart(cached_crime_data):
-    """Updates the pie chart based on cached crime data."""
-    
+def update_analysis_chart(view, cached_crime_data):
+    """Update the analysis chart based on selected view and cached data."""
+
     empty_fig = go.Figure()
     empty_fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
@@ -326,60 +339,149 @@ def update_pie_chart(cached_crime_data):
             "showarrow": False, "font": {"size": 16}
         }]
     )
-    
+
+    # Deprivation view: show mean annual crime rate per 1000 in three IMD bands
+    if view == 'deprivation':
+        try:
+            response = requests.get(f"{API_BASE_URL}/imd_scatter")
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching /imd_scatter data: {e}")
+            return empty_fig
+
+        if not data:
+            empty_fig.layout.annotations[0]['text'] = "No IMD / crime-rate data available"
+            return empty_fig
+
+        df_dec = pd.DataFrame(data)
+        df_dec = df_dec.dropna(subset=['imd_decile', 'annual_rate_per_1000'])
+        if df_dec.empty:
+            empty_fig.layout.annotations[0]['text'] = "No IMD / crime-rate data available"
+            return empty_fig
+
+        def band_for_decile(d):
+            try:
+                d_int = int(d)
+            except (TypeError, ValueError):
+                return None
+            if 1 <= d_int <= 3:
+                return "1-3 (More deprived)"
+            if 4 <= d_int <= 7:
+                return "4-7 (Middle)"
+            if 8 <= d_int <= 10:
+                return "8-10 (Less deprived)"
+            return None
+
+        df_dec['imd_band'] = df_dec['imd_decile'].apply(band_for_decile)
+        df_band = df_dec.dropna(subset=['imd_band'])
+        if df_band.empty:
+            empty_fig.layout.annotations[0]['text'] = "No IMD / crime-rate data available"
+            return empty_fig
+
+        band_summary = (
+            df_band
+            .groupby('imd_band', as_index=False)['annual_rate_per_1000']
+            .mean()
+            .rename(columns={'annual_rate_per_1000': 'avg_rate'})
+        )
+
+        band_order = ["1-3 (More deprived)", "4-7 (Middle)", "8-10 (Less deprived)"]
+        band_summary['imd_band'] = pd.Categorical(band_summary['imd_band'], categories=band_order, ordered=True)
+        band_summary = band_summary.sort_values('imd_band')
+
+        fig = px.bar(
+            band_summary,
+            x='imd_band',
+            y='avg_rate',
+            labels={
+                'imd_band': 'IMD Bands',
+                'avg_rate': 'Mean annual crime rate per 1,000 residents'
+            },
+            title='Deprivation vs Crime Rate (IMD bands 1–3, 4–7, 8–10)'
+        )
+        fig.update_layout(margin={"r":20,"t":40,"l":20,"b":20})
+        return fig
+
     if not cached_crime_data:
         return empty_fig
 
-    # Convert cached crime data to DataFrame
     df = pd.DataFrame(cached_crime_data)
-    
     if df.empty:
         empty_fig.layout.annotations[0]['text'] = "No data found for this selection"
         return empty_fig
 
-    # Count crimes by type
-    crime_counts = df['crime_type'].value_counts().reset_index()
-    crime_counts.columns = ['crime_type', 'count']
-    
-    labels = crime_counts['crime_type']
-    values = crime_counts['count']
-    
-    # Use the same color map as the main map for consistency
-    all_crime_types = sorted(df['crime_type'].unique())
     color_scale = px.colors.qualitative.Plotly
-    
-    # Create a mapping from crime_type to its color
-    color_map = {crime: color_scale[i % len(color_scale)] for i, crime in enumerate(all_crime_types)}
-    
-    df_colors = [color_map.get(crime, '#808080') for crime in crime_counts['crime_type']]
 
-    fig_pie = go.Figure(data=[go.Pie(
-        labels=labels, 
-        values=values, 
-        hole=.4,
-        pull=[0.01] * len(labels),
-        sort=False
-    )])
-    
-    fig_pie.update_traces(
-        textinfo='none', 
-        hoverinfo='label+percent+value',
-        marker=dict(colors=df_colors, line=dict(color='#FFFFFF', width=1))
-    )
-    
-    fig_pie.update_layout(
-        title_text=f"Crime Breakdown (Total: {len(df)})",
-        margin={"r":20,"t":40,"l":20,"b":20},
-        showlegend=True, 
-        legend_title_text='Crime Types',
-        legend=dict(
-            orientation="v",
-            yanchor="top",
-            y=1.0
+    if view == 'pie':
+        crime_counts = df['crime_type'].value_counts().reset_index()
+        crime_counts.columns = ['crime_type', 'count']
+
+        labels = crime_counts['crime_type']
+        values = crime_counts['count']
+
+        all_crime_types = sorted(df['crime_type'].unique())
+        color_map = {crime: color_scale[i % len(color_scale)] for i, crime in enumerate(all_crime_types)}
+        df_colors = [color_map.get(crime, '#808080') for crime in crime_counts['crime_type']]
+
+        fig = go.Figure(data=[go.Pie(
+            labels=labels,
+            values=values,
+            hole=.4,
+            pull=[0.01] * len(labels),
+            sort=False
+        )])
+
+        fig.update_traces(
+            textinfo='none',
+            hoverinfo='label+percent+value',
+            marker=dict(colors=df_colors, line=dict(color='#FFFFFF', width=1))
         )
-    )
-    
-    return fig_pie
+
+        fig.update_layout(
+            title_text=f"Crime Breakdown (Total: {len(df)})",
+            margin={"r":20,"t":40,"l":20,"b":20},
+            showlegend=True,
+            legend_title_text='Crime Types',
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1.0
+            )
+        )
+        return fig
+
+    if view == 'time_trend':
+        trend = df.groupby('month').size().reset_index(name='count').sort_values('month')
+        fig = px.line(
+            trend,
+            x='month',
+            y='count',
+            markers=True,
+            title='Crime Trend Over Time'
+        )
+        fig.update_layout(margin={"r":20,"t":40,"l":20,"b":20}, xaxis_title='Month', yaxis_title='Number of crimes')
+        return fig
+
+    if view == 'borough':
+        if 'borough' not in df.columns:
+            empty_fig.layout.annotations[0]['text'] = "Borough information not available"
+            return empty_fig
+
+        borough_counts = df['borough'].value_counts().reset_index()
+        borough_counts.columns = ['borough', 'count']
+        borough_counts = borough_counts.sort_values('count', ascending=False)
+
+        fig = px.bar(
+            borough_counts,
+            x='borough',
+            y='count',
+            title='Crimes by Borough (selected period)',
+        )
+        fig.update_layout(margin={"r":20,"t":40,"l":20,"b":20}, xaxis_title='Borough', yaxis_title='Number of crimes')
+        return fig
+
+    return empty_fig
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
