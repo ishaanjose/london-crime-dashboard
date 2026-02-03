@@ -310,87 +310,65 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
 
 @app.callback(
     Output('crime-pie-chart', 'figure'),
-    Input('apply-filters-button', 'n_clicks'),
-    [State('date-picker-range', 'start_date'),
-     State('date-picker-range', 'end_date'),
-     State('borough-dropdown', 'value'),
-     State('crime-type-dropdown', 'value')],
-    prevent_initial_call=True 
+    Input('cached-crime-data', 'data')
 )
-def update_pie_chart(n_clicks, start_date, end_date, boroughs, crime_types):
-    """Fetches aggregated data from the /summary endpoint to build the pie chart."""
+def update_pie_chart(cached_crime_data):
+    """Updates the pie chart based on cached crime data."""
     
-    empty_layout = {
-        "layout": {
-            "paper_bgcolor": "rgba(0,0,0,0)",
-            "plot_bgcolor": "rgba(0,0,0,0)",
-            "annotations": [{
-                "text": "Apply filters to see analysis",
-                "xref": "paper", "yref": "paper",
-                "showarrow": False, "font": {"size": 16}
-            }]
-        }
-    }
+    empty_fig = go.Figure()
+    empty_fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        annotations=[{
+            "text": "Apply filters to see analysis",
+            "xref": "paper", "yref": "paper",
+            "x": 0.5, "y": 0.5,
+            "showarrow": False, "font": {"size": 16}
+        }]
+    )
     
-    if not start_date or not end_date:
-        return empty_layout
+    if not cached_crime_data:
+        return empty_fig
 
-    params = {'start_date': start_date, 'end_date': end_date}
-    if boroughs:
-        params['borough'] = boroughs
-    if crime_types:
-        params['crime_type'] = crime_types
-
-    try:
-        response = requests.get(f"{API_BASE_URL}/summary", params=params)
-        response.raise_for_status()
-        data = response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching /summary data: {e}")
-        return empty_layout
-
-    if not data or not data.get('crime_counts_by_type'):
-        empty_layout["layout"]["annotations"][0]["text"] = "No data found for this selection"
-        return empty_layout
-
-    # Convert the summary dictionary to a DataFrame
-    crime_counts = data['crime_counts_by_type']
-    df = pd.DataFrame(list(crime_counts.items()), columns=['crime_type', 'count'])
-    df = df.sort_values(by='count', ascending=False) # Sort by count
+    # Convert cached crime data to DataFrame
+    df = pd.DataFrame(cached_crime_data)
     
     if df.empty:
-        empty_layout["layout"]["annotations"][0]["text"] = "No data found for this selection"
-        return empty_layout
+        empty_fig.layout.annotations[0]['text'] = "No data found for this selection"
+        return empty_fig
 
-    labels = df['crime_type']
-    values = df['count']
+    # Count crimes by type
+    crime_counts = df['crime_type'].value_counts().reset_index()
+    crime_counts.columns = ['crime_type', 'count']
+    
+    labels = crime_counts['crime_type']
+    values = crime_counts['count']
     
     # Use the same color map as the main map for consistency
-    all_crime_types = sorted(pd.Series(list(crime_counts.keys())).unique())
+    all_crime_types = sorted(df['crime_type'].unique())
     color_scale = px.colors.qualitative.Plotly
     
     # Create a mapping from crime_type to its color
     color_map = {crime: color_scale[i % len(color_scale)] for i, crime in enumerate(all_crime_types)}
     
-    df_colors = [color_map.get(crime, '#808080') for crime in df['crime_type']] # .get for safety
-
+    df_colors = [color_map.get(crime, '#808080') for crime in crime_counts['crime_type']]
 
     fig_pie = go.Figure(data=[go.Pie(
         labels=labels, 
         values=values, 
-        hole=.4, # Use .4 for a donut chart
-        pull=[0.01] * len(labels), # Adds a small separation
-        sort=False # Use the order from the dataframe
+        hole=.4,
+        pull=[0.01] * len(labels),
+        sort=False
     )])
     
     fig_pie.update_traces(
         textinfo='none', 
         hoverinfo='label+percent+value',
-        marker=dict(colors=df_colors, line=dict(color='#FFFFFF', width=1)) # Use mapped colors
+        marker=dict(colors=df_colors, line=dict(color='#FFFFFF', width=1))
     )
     
     fig_pie.update_layout(
-        title_text=f"Crime Breakdown (Total: {data['total_crimes']})",
+        title_text=f"Crime Breakdown (Total: {len(df)})",
         margin={"r":20,"t":40,"l":20,"b":20},
         showlegend=True, 
         legend_title_text='Crime Types',
