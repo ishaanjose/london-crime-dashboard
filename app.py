@@ -83,7 +83,7 @@ def create_filter_card():
                 }
             )
         ]),
-        className="shadow-sm border-0"
+        className="shadow-sm border-0 rounded-3 bg-white"
     )
 
 
@@ -107,11 +107,11 @@ def create_map_card():
                 children=dcc.Graph(
                     id='crime-map',
                     figure={}, 
-                    style={'height': '70vh'}
+                    style={'height': '65vh'}
                 )
             )
         ]),
-        className="shadow-sm border-0"
+        className="shadow-sm border-0 rounded-3 bg-white"
     )
 
 def create_analysis_card():
@@ -137,23 +137,39 @@ def create_analysis_card():
                 children=dcc.Graph(
                     id='analysis-chart',
                     figure={},
-                    style={'height': '45vh'}
+                    style={'height': '50vh'}
                 )
             )
         ]),
-        className="shadow-sm border-0"
+        className="shadow-sm border-0 rounded-3 bg-white"
     )
 
+navbar = dbc.NavbarSimple(
+    brand="London Street Crime Explorer",
+    color="dark",
+    dark=True,
+    className="mb-3 shadow-sm rounded-3"
+)
+
 app.layout = dbc.Container([
-    dcc.Store(id='cached-crime-data'),  # Add this to cache raw crime data
-    dcc.Store(id='cached-borough-data'),  # Add this to cache borough summary
+    navbar,
+    dcc.Store(id='cached-crime-data'),  # cache raw crime data
+    dcc.Store(id='cached-borough-data'),  # cache borough summary
     dbc.Row([
-        dbc.Col(create_filter_card(), md=4),
-        dbc.Col(create_map_card(), md=8),
-    ]),
-    dbc.Row([
-        dbc.Col(create_analysis_card(), md=12, className="mt-4"), 
-    ], className="mb-4"),
+        dbc.Col(create_filter_card(), md=3, lg=3, xl=3, className="mb-3"),
+        dbc.Col(
+            dbc.Tabs(
+                [
+                    dbc.Tab(create_map_card(), label="Map", tab_id="tab-map"),
+                    dbc.Tab(create_analysis_card(), label="Analysis", tab_id="tab-analysis"),
+                ],
+                id="main-tabs",
+                active_tab="tab-map",
+                className="flex-column flex-sm-row"
+            ),
+            md=9, lg=9, xl=9, className="mb-3"
+        ),
+    ], className="g-3"),
 ], fluid=True, className="bg-light p-4")
 
 @app.callback(
@@ -249,7 +265,6 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
         except requests.exceptions.RequestException as e:
             print(f"Error fetching borough summary: {e}")
     else:
-        # Triggered by map-type-selector, use cached data
         crime_data = cached_crime_data
         borough_data = cached_borough_data
     

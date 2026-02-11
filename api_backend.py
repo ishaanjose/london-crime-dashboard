@@ -10,6 +10,8 @@ DB_FILE = 'street_crime.db'
 TABLE_NAME = 'crimes'
 BOROUGH_BOUNDARIES_FILE = 'London Boroughs.geojson'
 
+imd_scatter_cache = None
+
 app = FastAPI(
     title='London Crime Data API',
     description='An API to query street-level crime data in London',
@@ -317,6 +319,11 @@ def get_types():
 def get_imd_scatter():
     """Return IMD vs annualised crime rate per 1000 residents at LSOA level.
     """
+    global imd_scatter_cache
+
+    # Return cached result if we've already computed it
+    if imd_scatter_cache is not None:
+        return imd_scatter_cache
 
     conn = db_connection()
     if not conn:
@@ -334,7 +341,7 @@ def get_imd_scatter():
     except Exception:
         span_years = 1.0
 
-    #  normalized annual crime rate per 1000 residents for each LSOA
+    # Normalized annual crime rate per 1000 residents for each LSOA
     try:
         query = f"""
             SELECT 
@@ -370,7 +377,8 @@ def get_imd_scatter():
             "annual_rate_per_1000": r["annual_rate_per_1000"],
         })
 
-    return scatter_data
+    imd_scatter_cache = scatter_data
+    return imd_scatter_cache
 
 
 @app.get("/imd_deciles")
