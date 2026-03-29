@@ -522,3 +522,48 @@ def get_correlation_results():
 
     correlation_cache = results
     return correlation_cache
+
+
+
+## Seasonal EP
+# Groups crimes by month (Jan, Feb, etc) across all years, to identify seasonal patterns.
+@app.get("/seasonal")
+def get_seasonal():
+    """
+    Returns average monthly crime count per season per crime type.
+    Seasons: Spring (Mar-May), Summer (Jun-Aug), Autumn (Sep-Nov), Winter (Dec-Feb).
+    """
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+
+    try:
+        monthly = pd.read_sql("""
+            SELECT crime_type, month, COUNT(*) as crime_count
+            FROM crimes
+            GROUP BY crime_type, month""", conn)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying seasonal data: {e}")
+    
+    conn.close()
+
+    season_map = {
+        '01': 'Winter', '02': 'Winter', '12': 'Winter',
+        '03': 'Spring', '04': 'Spring', '05': 'Spring',
+        '06': 'Summer', '07': 'Summer', '08': 'Summer',
+        '09': 'Autumn', '10': 'Autumn', '11': 'Autumn',
+    }
+    monthly['month_num'] = monthly['month'].str[5:7]
+    monthly['season'] = monthly['month_num'].map(season_map)
+
+    result = (
+        monthly.groupby(['crime_type', 'season'])['crime_count']
+        .mean()
+        .reset_index()
+        .rename(columns={'crime_count': 'avg_monthly_count'})
+    )
+    
+    result['avg_monthly_count'] = result['avg_monthly_count'].round(1)
+
+    return result.to_dict(orient='records')

@@ -127,6 +127,7 @@ def create_analysis_card():
                     {"label": "Borough Comparison", "value": "borough"},
                     {"label": "Deprivation Link", "value": "deprivation"},
                     {"label": "IMD Correlation", "value": "correlation"},
+                    {"label": "Seasonal Trends", "value": "seasonal"},
                 ],
                 value="pie",
                 inline=True,
@@ -418,6 +419,96 @@ def update_analysis_chart(view, cached_crime_data):
         )
         fig.update_layout(margin={"r":20,"t":40,"l":20,"b":20})
         return fig
+    
+
+    
+    if view == 'seasonal':
+        try:
+            response = requests.get(f"{API_BASE_URL}/seasonal")
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching /seasonal data: {e}")
+            return empty_fig
+        
+        if not data:
+            empty_fig.layout.annotations[0]['text'] = "No seasonal data available"
+            return empty_fig
+        
+        df_sea = pd.DataFrame(data)
+
+        season_order = ['Spring', 'Summer', 'Autumn', 'Winter']
+        df_sea['season'] = pd.Categorical(df_sea['season'], categories=season_order, ordered=True)
+        df_sea = df_sea.sort_values('season')
+
+        fig = px.line(
+            df_sea,
+            x='season',
+            y='avg_monthly_count',
+            markers=True,
+            title='Seasonal Crime Trends (average number of crimes per month)',
+            color='crime_type',
+            labels={'season': 'Season', 'avg_monthly_count': 'Average monthly crime count', 'crime_type': 'Crime Type'}
+        )
+        fig.update_layout(margin={"r":20,"t":40,"l":20,"b":20})
+        return fig
+
+
+    # IMD Correlation view: Display as table
+    if view == 'correlation':
+        try:
+            response = requests.get(f"{API_BASE_URL}/correlation_results")
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching /correlation_results: {e}")
+            empty_fig.layout.annotations[0]['text'] = f"Error: {str(e)}"
+            return empty_fig
+
+        if not data:
+            empty_fig.layout.annotations[0]['text'] = "No correlation data available"
+            return empty_fig
+
+        df_corr = pd.DataFrame(data)
+        df_corr = df_corr.sort_values('pearson_r', ascending=False)
+
+        # Create a table figure using Plotly
+        fig = go.Figure(data=[go.Table(
+            header=dict(
+                values=['<b>Crime Type</b>', '<b>Pearson r</b>', '<b>P-Value</b>', '<b>Strength</b>', '<b>N LSOAs</b>'],
+                fill_color='#2c3e50',
+                align='left',
+                font=dict(color='white', size=12)
+            ),
+            cells=dict(
+                values=[
+                    df_corr['crime_type'],
+                    df_corr['pearson_r'].round(4),
+                    df_corr['p_value'].apply(lambda x: f"{x:.2e}"),
+                    df_corr['strength'],
+                    df_corr['n_lsoas']
+                ],
+                fill_color=[
+                    'rgba(240, 240, 240, 0.5)',
+                    'rgba(220, 220, 220, 0.5)',
+                    'rgba(240, 240, 240, 0.5)',
+                    'rgba(220, 220, 220, 0.5)',
+                    'rgba(240, 240, 240, 0.5)'
+                ],
+                align='left',
+                font=dict(size=11),
+                height=25
+            )
+        )])
+
+        fig.update_layout(
+            title_text="<b>Pearson Correlation: IMD Rank vs Annual Crime Rate per 1,000 Residents</b><br><sub>All results: p < 0.05</sub>",
+            margin={"r":20,"t":80,"l":20,"b":20},
+            height=400 + len(df_corr) * 25
+        )
+        return fig
+    
+
 
     if not cached_crime_data:
         return empty_fig
@@ -497,59 +588,6 @@ def update_analysis_chart(view, cached_crime_data):
         fig.update_layout(margin={"r":20,"t":40,"l":20,"b":20}, xaxis_title='Borough', yaxis_title='Number of crimes')
         return fig
 
-    # IMD Correlation view: Display as table
-    if view == 'correlation':
-        try:
-            response = requests.get(f"{API_BASE_URL}/correlation_results")
-            response.raise_for_status()
-            data = response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching /correlation_results: {e}")
-            empty_fig.layout.annotations[0]['text'] = f"Error: {str(e)}"
-            return empty_fig
-
-        if not data:
-            empty_fig.layout.annotations[0]['text'] = "No correlation data available"
-            return empty_fig
-
-        df_corr = pd.DataFrame(data)
-        df_corr = df_corr.sort_values('pearson_r', ascending=False)
-
-        # Create a table figure using Plotly
-        fig = go.Figure(data=[go.Table(
-            header=dict(
-                values=['<b>Crime Type</b>', '<b>Pearson r</b>', '<b>P-Value</b>', '<b>Strength</b>', '<b>N LSOAs</b>'],
-                fill_color='#2c3e50',
-                align='left',
-                font=dict(color='white', size=12)
-            ),
-            cells=dict(
-                values=[
-                    df_corr['crime_type'],
-                    df_corr['pearson_r'].round(4),
-                    df_corr['p_value'].apply(lambda x: f"{x:.2e}"),
-                    df_corr['strength'],
-                    df_corr['n_lsoas']
-                ],
-                fill_color=[
-                    'rgba(240, 240, 240, 0.5)',
-                    'rgba(220, 220, 220, 0.5)',
-                    'rgba(240, 240, 240, 0.5)',
-                    'rgba(220, 220, 220, 0.5)',
-                    'rgba(240, 240, 240, 0.5)'
-                ],
-                align='left',
-                font=dict(size=11),
-                height=25
-            )
-        )])
-
-        fig.update_layout(
-            title_text="<b>Pearson Correlation: IMD Rank vs Annual Crime Rate per 1,000 Residents</b><br><sub>All results: p < 0.05</sub>",
-            margin={"r":20,"t":80,"l":20,"b":20},
-            height=400 + len(df_corr) * 25
-        )
-        return fig
 
     return empty_fig
 
