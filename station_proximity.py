@@ -23,6 +23,12 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
 
+# Add station count to analysis
+def count_stations_within_radius(lat, lon, station_lats, station_lons, radius_m=1000):
+    """ Count how many stations are within a given radius of a point. """
+    dists = haversine(lat, lon, station_lats, station_lons)
+    return int(np.sum(dists <= radius_m))
+
 def fetch_centroids(lsoa_codes):
     """ Fetch real LSOA centroid coordinates from ArcGIS API in batches"""
     all_rows = []
@@ -62,32 +68,35 @@ def run():
     stations_lons = stations['lon'].values
     distances, nearest = [],[]
 
+
+    station_counts= []
     for _, row in centroids.iterrows():
         dists = haversine(row['lat'], row['lon'], stations_lats, stations_lons)
         idx = np.argmin(dists)
         distances.append(dists[idx])
         nearest.append(stations.iloc[idx]['name'])
+        station_counts.append(count_stations_within_radius(row['lat'], row['lon'], stations_lats, stations_lons))
 
-
+    centroids['stations_within_1km'] = station_counts
     centroids['distance_to_station_m'] = distances
     centroids['nearest_station'] = nearest
     centroids['near_station'] = (centroids['distance_to_station_m'] <= NEAR_THRESHOLD_M).astype(int)
 
     print("Updating database with proximity results...")
-    for col in ['distance_to_station_m', 'nearest_station', 'near_station']:
+    for col in ['distance_to_station_m', 'nearest_station', 'near_station','stations_within_1km']:
         try:
             conn.execute(f"ALTER TABLE lsoa_stats ADD COLUMN {col}")
         except:
             pass
     
-    centroids[['lsoa_code', 'distance_to_station_m', 'nearest_station', 'near_station']].to_sql(
-        '_stn_tmp', conn, if_exists='replace', index=False)
+    centroids[['lsoa_code', 'distance_to_station_m', 'nearest_station', 'near_station','stations_within_1km']].to_sql('_stn_tmp', conn, if_exists='replace', index=False)
     
     conn.execute("""
         UPDATE lsoa_stats SET
                  distance_to_station_m = (SELECT distance_to_station_m FROM _stn_tmp WHERE _stn_tmp.lsoa_code = lsoa_stats.lsoa_code),
                  nearest_station = (SELECT nearest_station FROM _stn_tmp WHERE _stn_tmp.lsoa_code = lsoa_stats.lsoa_code),
-                 near_station = (SELECT near_station FROM _stn_tmp WHERE _stn_tmp.lsoa_code = lsoa_stats.lsoa_code)
+                 near_station = (SELECT near_station FROM _stn_tmp WHERE _stn_tmp.lsoa_code = lsoa_stats.lsoa_code),
+                 stations_within_1km = (SELECT stations_within_1km FROM _stn_tmp WHERE _stn_tmp.lsoa_code = lsoa_stats.lsoa_code)
     """)
     conn.execute("DROP TABLE _stn_tmp")
     conn.commit()

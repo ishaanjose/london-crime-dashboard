@@ -12,13 +12,12 @@ def calculate_normalized_correlations():
     # Identify unique crime types
     crime_types = pd.read_sql("SELECT DISTINCT crime_type FROM crimes", conn)['crime_type'].tolist()
     
-    # Corrected temporal span calculation: SQLite julianday needs YYYY-MM-DD.
     # We append '-01' to the YYYY-MM strings.
     span_query = "SELECT (julianday(MAX(month) || '-01') - julianday(MIN(month) || '-01')) / 365.25 as span FROM crimes"
     span_info = pd.read_sql(span_query, conn).iloc[0]
     
     raw_span = span_info['span']
-    # If the span is valid, use it; otherwise default to 1.0
+    # If the span is valid, use it, otherwise default to 1.0
     span_years = raw_span if pd.notnull(raw_span) and raw_span > 0 else 1.0
 
     results = []
