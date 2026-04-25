@@ -96,6 +96,7 @@ def create_map_card():
                 options=[
                     {"label": "Dot Map", "value": "dot"},
                     {"label": "Choropleth Map", "value": "choropleth"},
+                    {"label": "Station Proximity (RQ2)", "value": "station_proximity"},
                 ],
                 value="dot", 
                 inline=True,
@@ -298,7 +299,84 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
         fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
         legend_title = "Choropleth Legend"
         legend_content = html.P("Green = Low crime, Red = High crime", className="text-muted small")
-        
+    if map_type == 'station_proximity':
+        try:
+            response = requests.get(f"{API_BASE_URL}/station_map_data")
+            response.raise_for_status()
+            st_data = response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching station map data: {e}")
+            empty_map_fig.update_layout(title="Error loading station data")
+            return (empty_map_fig, "Legend", [], cached_crime_data, cached_borough_data)
+
+        df_st = pd.DataFrame(st_data)
+        df_st = df_st[df_st.avg_rate_500 > 0]
+
+        # Normalise rate to 0-1 for colour scale
+        p95 = df_st.avg_rate_500.quantile(0.95)
+        df_st['norm'] = (df_st.avg_rate_500 / p95).clip(upper=1)
+        df_st['size'] = (df_st.norm * 18 + 6).round(1)
+        london_avg = round(float(df_st.avg_rate_500.mean()), 1)
+        df_st['diff'] = (df_st.avg_rate_500 - london_avg).round(1)
+        df_st['label'] = df_st.apply(
+            lambda r: (
+                f"<b>{r['name']}</b><br>"
+                f"Crime rate within 500m: <b>{r['avg_rate_500']}/1k</b><br>"
+                f"{'▲' if r['diff'] > 0 else '▼'} {abs(r['diff'])} vs London avg ({london_avg}/1k)"
+            ),
+            axis=1
+        )
+        fig_map = go.Figure()
+
+        # Station circles — coloured by avg crime rate
+        fig_map.add_trace(go.Scattermapbox(
+            lat=df_st['lat'],
+            lon=df_st['lon'],
+            mode='markers',
+            marker=dict(
+                size=df_st['size'],
+                color=df_st['avg_rate_500'],
+                colorscale=[
+                    [0.0,  '#4575b4'],
+                    [0.25, '#74add1'],
+                    [0.5,  '#fee090'],
+                    [0.75, '#f46d43'],
+                    [1.0,  '#a50026'],
+                ],
+                cmin=0,
+                cmax=float(p95),
+                colorbar=dict(
+                    title='Avg crime rate<br>per 1,000',
+                    thickness=12,
+                    len=0.6,
+                ),
+                opacity=0.85,
+            ),
+            text=df_st['label'],
+            hoverinfo='text',
+            name='TFL Stations'
+        ))
+
+        fig_map.update_layout(
+            mapbox_style='carto-positron',
+            mapbox_center={'lat': 51.5074, 'lon': -0.1278},
+            mapbox_zoom=9.5,
+            margin={'r': 0, 't': 40, 'l': 0, 'b': 0},
+            title='RQ2 — Avg crime rate within 500m of each TFL station',
+            showlegend=False
+        )
+
+        legend_title = "Station Proximity"
+        legend_content = html.Div([
+            html.P("Each dot = one TFL station", className="small text-muted"),
+            html.P("Colour + size = avg crime rate within 500m", className="small text-muted"),
+            html.P("Blue = low crime  →  Red = high crime", className="small text-muted"),
+        ])
+        return (fig_map, legend_title, legend_content, cached_crime_data, cached_borough_data)
+
+
+
+
     else:  # dot map
         if not crime_data:
             empty_map_fig.update_layout(title="No data - click Apply Filters")

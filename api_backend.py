@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from shapely.geometry import Point
+import numpy as np
 
 DB_FILE = 'street_crime.db'
 TABLE_NAME = 'crimes'
@@ -567,3 +568,53 @@ def get_seasonal():
     result['avg_monthly_count'] = result['avg_monthly_count'].round(1)
 
     return result.to_dict(orient='records')
+
+
+
+@app.get("/station_map_data")
+def get_station_map_data():
+    """
+    For each TFL station, returns average annual crime rate per 1000 residents in nearby LSOAs, and distance to nearest station.
+    """
+
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+
+    try: # Get all non-outlier LSOAs with their centroid coords + crime rates
+        lsoas = pd.read_sql("""
+            SELECT s.lsoa_code, s.annual_crime_rate_per_1000, AVG(c.latitude) as lat, AVG(c.longitude) as lon
+            FROM lsoa_stats s 
+            JOIN crimes c ON c.lsoa = s.lsoa_code
+            WHERE s.is_outlier = 0 AND s.near_station IS NOT NULL AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+            GROUP BY s.lsoa_code
+        """, conn)
+
+        stations = pd.read_sql("""SELECT name, lat, lon FROM stations""", conn)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying station map data: {e}")
+    
+    conn.close()
+
+    def haversine_vec(lat1, lon1, lat2, lon2):
+        R = 6371000  
+        dlat = np.radians(lat2 - lat1)
+        dlon = np.radians(lon2 - lon1)
+        a = np.sin(dlat/2)**2 + np.cos(np.radians(lat1))*np.cos(np.radians(lat2))*np.sin(dlon/2)**2
+        return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+    
+
+    results = []
+    for _, st in stations.iterrows():
+        dists = haversine_vec(lsoas.lat.values, lsoas.lon.values, st.lat, st.lon)
+        within = lsoas[dists <= 500]
+        avg = round(float(within.annual_crime_rate_per_1000.mean()), 2) if not within.empty else 0
+        results.append({
+            "name"  : st["name"],
+            "lat"   : st.lat,
+            "lon"   : st.lon,
+            "avg_rate_500": avg,
+            "n_lsoas": int(len(within))
+        })
+    return results
