@@ -129,6 +129,8 @@ def create_analysis_card():
                     {"label": "Deprivation Link", "value": "deprivation"},
                     {"label": "IMD Correlation", "value": "correlation"},
                     {"label": "Seasonal Trends", "value": "seasonal"},
+                    {"label": "Station: Near vs Far (RQ2)", "value": "station_near_far"},
+                    {"label": "Station: Distance Decay (RQ2)", "value": "station_decay"},
                 ],
                 value="pie",
                 inline=True,
@@ -299,7 +301,7 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
         fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
         legend_title = "Choropleth Legend"
         legend_content = html.P("Green = Low crime, Red = High crime", className="text-muted small")
-    if map_type == 'station_proximity':
+    elif map_type == 'station_proximity':
         try:
             response = requests.get(f"{API_BASE_URL}/station_map_data")
             response.raise_for_status()
@@ -587,7 +589,80 @@ def update_analysis_chart(view, cached_crime_data):
         return fig
     
 
+    if view in ('station_near_far', 'station_decay'):
+        try:
+            response = requests.get(f"{API_BASE_URL}/station_analysis")
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching /station_analysis: {e}")
+            return empty_fig
+        
 
+            ## view 1
+        if view == 'station_near_far':
+                df_sp = pd.DataFrame(data['by_crime_type'])
+                df_sp['proximity'] = df_sp['near_station'].map({
+                    1: 'Near (≤500m)',
+                    0: 'Far (>500m)'
+                })
+
+
+                pivot = df_sp.pivot(index='crime_type', columns='proximity', values='avg_rate').fillna(0)
+                pivot['diff'] = pivot.get('Near (≤500m)', 0) - pivot.get('Far (>500m)', 0)
+                sorted_types = pivot.sort_values('diff', ascending=False).index.tolist()
+                df_sp['crime_type'] = pd.Categorical(df_sp['crime_type'], categories=sorted_types, ordered=True)
+                df_sp = df_sp.sort_values('crime_type')
+
+                fig = px.bar(
+                    df_sp,
+                    x='crime_type',
+                    y='avg_rate',
+                    color='proximity',
+                    barmode='group',
+                    color_discrete_map={
+                        'Near (≤500m)': '#d73027',
+                        'Far (>500m)': '#4575b4'
+                    },
+                    title='RQ2 — Crime Rate Near vs Far from TFL Stations by Crime Type',
+                    labels={
+                        'crime_type': 'Crime Type',
+                        'avg_rate': 'Avg annual rate per 1,000 residents',
+                        'proximity': 'Proximity'
+                    }
+                )
+                fig.update_layout(
+                    margin={"r": 20, "t": 50, "l": 20, "b": 120},
+                    xaxis_tickangle=-40
+                )
+                return fig
+
+        # View 2
+        if view == 'station_decay':
+                df_decay = pd.DataFrame(data['decay'])
+                band_order = ['0-250m','250-500m','500-750m','750-1000m','1000-1500m','1500-2000m','+2km']
+                df_decay['band'] = pd.Categorical(
+                    df_decay['band'], categories=band_order, ordered=True
+                )
+                df_decay = df_decay.sort_values('band')
+
+                fig = px.line(
+                    df_decay,
+                    x='band',
+                    y='avg_rate',
+                    markers=True,
+                    title='RQ2 — Crime Rate Decay with Distance from Nearest TFL Station',
+                    labels={
+                        'band': 'Distance from nearest station',
+                        'avg_rate': 'Avg annual crime rate per 1,000 residents'
+                    }
+                )
+                fig.update_traces(
+                    line=dict(color='#d73027', width=2.5),
+                    marker=dict(size=8, color='#d73027')
+                )
+                fig.update_layout(margin={"r": 20, "t": 50, "l": 20, "b": 40})
+                return fig
     if not cached_crime_data:
         return empty_fig
 

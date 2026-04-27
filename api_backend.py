@@ -12,6 +12,8 @@ TABLE_NAME = 'crimes'
 BOROUGH_BOUNDARIES_FILE = 'London Boroughs.geojson'
 
 imd_scatter_cache = None
+station_analysis_cache = None
+
 
 app = FastAPI(
     title='London Crime Data API',
@@ -618,3 +620,62 @@ def get_station_map_data():
             "n_lsoas": int(len(within))
         })
     return results
+
+
+
+@app.get("/station_analysis")
+def get_station_analysis():
+    """
+    Returns two datasets for RQ2:
+    1) decay: avg crime rate per distance band (0-250m, 250-500m, etc.)
+    2) by crime type: avg crime rate near vs far for each crime type.
+    """
+
+    global station_analysis_cache
+    if station_analysis_cache is not None:
+        return station_analysis_cache
+    
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    
+    try:
+        decay = pd.read_sql("""
+SELECT
+    CASE
+    WHEN distance_to_station_m <= 250 THEN '0-250m'
+    WHEN distance_to_station_m <= 500 THEN '250-500m'
+    WHEN distance_to_station_m <= 750 THEN '500-750m'
+    WHEN distance_to_station_m <= 1000 THEN '750-1000m'
+    WHEN distance_to_station_m <= 1500 THEN '1000-1500m'
+    WHEN distance_to_station_m <= 2000 THEN '1500-2000m'
+    ELSE '+2km' END as band,
+                            ROUND(AVG(annual_crime_rate_per_1000), 2) AS avg_rate,
+                            COUNT(*) AS n_lsoas
+                            FROM lsoa_stats
+                            WHERE is_outlier = 0 AND distance_to_station_m IS NOT NULL
+                            GROUP BY band
+                            """, conn)
+
+
+        by_type = pd.read_sql("""
+SELECT c.crime_type, s.near_station, ROUND(AVG(s.annual_crime_rate_per_1000), 2) AS avg_rate
+                              FROM lsoa_stats s
+JOIN (SELECT DISTINCT lsoa, crime_type FROM crimes) c ON s.lsoa_code = c.lsoa
+WHERE s.is_outlier = 0 AND s.near_station IS NOT NULL
+                              GROUP BY c.crime_type, s.near_station 
+                              ORDER BY c.crime_type, s.near_station
+                              """, conn)
+
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying station analysis data: {e}")
+    
+    conn.close()
+
+    station_analysis_cache = {
+        "decay": decay.to_dict(orient='records'),
+        "by_crime_type": by_type.to_dict(orient='records')
+    }
+
+    return station_analysis_cache
