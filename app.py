@@ -397,27 +397,48 @@ def load_insight_charts(rq1_open, rq2_open, rq3_open):
     empty.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         margin=dict(l=10,r=10,t=10,b=10))
 
-    # RQ1 — IMD deprivation bar chart
+    # RQ1 — Correlation heatmap per crime type
     fig1 = empty
     if rq1_open:
         try:
-            data = requests.get(f"{API_BASE_URL}/imd_scatter").json()
-            df = pd.DataFrame(data).dropna(subset=['imd_decile','annual_rate_per_1000'])
-            def band(d):
-                d = int(d)
-                if d <= 3: return "1-3\nMost deprived"
-                if d <= 7: return "4-7\nMiddle"
-                return "8-10\nLeast deprived"
-            df['band'] = df['imd_decile'].apply(band)
-            summary = df.groupby('band',as_index=False)['annual_rate_per_1000'].mean()
-            order = ["1-3\nMost deprived","4-7\nMiddle","8-10\nLeast deprived"]
-            summary['band'] = pd.Categorical(summary['band'], categories=order, ordered=True)
-            fig1 = px.bar(summary.sort_values('band'), x='band', y='annual_rate_per_1000',
-                          color='band',
-                          color_discrete_sequence=['#6f42c1','#9b72cf','#c9b1e8'],
-                          labels={'band':'IMD Band','annual_rate_per_1000':'Avg rate per 1,000'},
-                          title='Crime rate by deprivation band')
-            fig1.update_layout(showlegend=False, margin=dict(l=10,r=10,t=40,b=10))
+            data = requests.get(f"{API_BASE_URL}/correlation_results").json()
+            if not data:
+                print("No correlation data available")
+            else:
+                df = pd.DataFrame(data)
+                df['abs_r'] = df['pearson_r'].abs()
+                df = df.sort_values('abs_r', ascending=True)
+                
+                fig1 = go.Figure(data=go.Bar(
+                    y=df['crime_type'],
+                    x=df['abs_r'],
+                    orientation='h',
+                    marker=dict(
+                        color=df['abs_r'],
+                        colorscale=[[0, "#2563eb"], [1, "#dc2626"]],
+                        cmin=0,
+                        cmax=1,
+                        colorbar=dict(
+                            title="Strength |r|",
+                            thickness=12,
+                            len=0.8
+                        ),
+                        line=dict(color="rgba(0,0,0,0.1)", width=0.5)
+                    ),
+                    text=df['abs_r'].round(3),
+                    textposition='outside',
+                    textfont=dict(size=11),
+                    hovertemplate="<b>%{y}</b><br>|r| = %{x:.4f}<extra></extra>"
+                ))
+                fig1.update_layout(
+                    title='IMD rank vs. crime rate (Pearson correlation strength)',
+                    xaxis_title="Strength of correlation |r|",
+                    yaxis_title="",
+                    xaxis=dict(range=[0, 1]),
+                    height=350,
+                    margin=dict(l=180, r=100, t=50, b=40),
+                    yaxis=dict(automargin=True)
+                )
         except Exception as e:
             print(f"RQ1 insight chart error: {e}")
 
