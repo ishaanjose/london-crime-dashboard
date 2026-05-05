@@ -8,7 +8,7 @@ import requests
 import numpy as np
 import pandas as pd
 
-DB_PATH = "../data/street_crime.db"
+DB_PATH = "data/street_crime.db"
 NEAR_THRESHOLD = 500   # metres
 YEARS = 3.0            
 BATCH_SIZE = 50

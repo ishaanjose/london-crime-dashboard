@@ -6,7 +6,7 @@ import sqlite3
 import requests
 import time
 
-DB_PATH = "../data/street_crime.db"
+DB_PATH = "data/street_crime.db"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 HEADERS = {"User-Agent": "LondonCrimeDashboard/1.0"}
 

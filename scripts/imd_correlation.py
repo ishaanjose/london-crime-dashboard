@@ -7,7 +7,7 @@ def calculate_normalized_correlations():
     Calculates Pearson correlation between IMD Rank and Annualized Crime Rate.
     Filters out commercial/low-population outliers
     """
-    conn = sqlite3.connect('../data/street_crime.db')
+    conn = sqlite3.connect('data/street_crime.db')
     
     # Identify unique crime types
     crime_types = pd.read_sql("SELECT DISTINCT crime_type FROM crimes", conn)['crime_type'].tolist()
@@ -73,7 +73,7 @@ def analyze_normalized_deciles():
     Aggregates annualized crime rates by IMD Decile using lsoa_stats.
     Excludes outliers to show true residential socio-economic impact.
     """
-    conn = sqlite3.connect('../data/street_crime.db')
+    conn = sqlite3.connect('data/street_crime.db')
     
     print("\n--- Mean Annual Crime Rate by IMD Decile (Residential Only) ---")
     print(f"{'Decile':<10} | {'Avg Annual Rate/1000 Residents':<30}")

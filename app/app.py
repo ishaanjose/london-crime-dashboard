@@ -10,7 +10,7 @@ import json
 from dash import callback_context 
 
 API_BASE_URL = "http://127.0.0.1:8000"  
-BOROUGH_GEOJSON_FILE = '../data/London Boroughs.geojson'
+BOROUGH_GEOJSON_FILE = 'data/London Boroughs.geojson'
 
 try:
     with open(BOROUGH_GEOJSON_FILE, 'r') as f:

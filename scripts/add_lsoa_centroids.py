@@ -5,7 +5,7 @@ import sqlite3
 import pandas as pd
 from scripts.station_proximity import fetch_centroids
 
-DB_PATH = "../data/street_crime.db"
+DB_PATH = "data/street_crime.db"
 
 conn = sqlite3.connect(DB_PATH, timeout=30)
 cur = conn.cursor()

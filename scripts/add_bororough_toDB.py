@@ -4,9 +4,9 @@ import pandas as pd
 from shapely.geometry import Point
 import time
 
-DB_FILE = '../data/street_crime.db'
+DB_FILE = 'data/street_crime.db'
 TABLE_NAME = 'crimes'
-BOROUGH_BOUNDARIES = '../data/London Boroughs.geojson'
+BOROUGH_BOUNDARIES = 'data/London Boroughs.geojson'
 
 def enrich_db():
     """Connect to crime database and assign borough names using spatial join.

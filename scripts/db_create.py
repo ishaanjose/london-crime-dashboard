@@ -12,7 +12,7 @@ def concat_csvs(directory):
 
 
 
-con = sqlite3.connect('../data/street_crime.db')
+con = sqlite3.connect('data/street_crime.db')
 cur = con.cursor()
 cur.execute('''CREATE TABLE crimes (month text, longitude int, latitude int, crime_type text, lsoa text )''')
 
