@@ -4,19 +4,18 @@ import pandas as pd
 from shapely.geometry import Point
 import time
 
-DB_FILE = 'street_crime.db'
+DB_FILE = '../data/street_crime.db'
 TABLE_NAME = 'crimes'
-BOROUGH_BOUNDARIES = 'London Boroughs.geojson'
+BOROUGH_BOUNDARIES = '../data/London Boroughs.geojson'
 
 def enrich_db():
     """Connect to crime database and assign borough names using spatial join.
 
     Reads the crime table from SQLite, converts the latitude/longitude 
-    coordinates into points, and joins them with a GeoDataFrame of London borough
+coordinates into points, and joins them with a GeoDataFrame of London borough
     boundaries. 
     
-    The borough value is then written back into the database for each
-    crime record.
+    borough value is then written back into the database for each crime record.
     """
 
     conn = None
@@ -27,7 +26,6 @@ def enrich_db():
         # Load London borough boundaries from a GeoJSON file.
         boroughs_gdf = geopandas.read_file(BOROUGH_BOUNDARIES)
 
-        # Get minimum set of columns needed for spatial matching.
         crimes = pd.read_sql_query(f"SELECT ROWID, latitude, longitude FROM {TABLE_NAME}", conn)
 
         # Convert each crime location into a shapely Point and build a GeoDataFrame

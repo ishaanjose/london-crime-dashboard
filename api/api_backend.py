@@ -1,20 +1,27 @@
 import sqlite3
 import pandas as pd
 import geopandas
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional, List
 from shapely.geometry import Point
 import numpy as np
+import os
+from scipy.stats import pearsonr
 
-DB_FILE = 'street_crime.db'
+# to make sure can run on any machine without path changing
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_FILE = os.path.join(BASE_DIR, 'data', 'street_crime.db')
 TABLE_NAME = 'crimes'
-BOROUGH_BOUNDARIES_FILE = 'London Boroughs.geojson'
+BOROUGH_BOUNDARIES_FILE = os.path.join(BASE_DIR, 'data', 'London Boroughs.geojson')
 
+# caches and global vars
 imd_scatter_cache = None
 station_analysis_cache = None
 park_analysis_cache = None
-
+parks_cache = None
+proximity_dots_cache = None
+imd_deciles_cache = None
 DATASET_YEARS = 3.0
 
 
@@ -23,6 +30,7 @@ app = FastAPI(
     description='An API to query street-level crime data in London',
     version = '2.0.0',
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,9 +55,14 @@ def db_connection():
         return None
     return conn
 
+
+
 @app.get('/')
 def read_root():
     return {"message": "Welcome to the Crime Data API v2! Use /docs to see endpoints."}
+
+
+
 
 
 @app.get("/crimes")
@@ -57,13 +70,12 @@ def get_crimes(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     specific_month: Optional[str] = None,
-    crime_type: Optional[str] = None,
-    borough: Optional[str] = None,
-
+    crime_type: Optional[List[str]] = Query(None),
+    borough: Optional[List[str]] = Query(None),
 ):
     """
     Get crime data, filtered by an optional date range, crime type, and borough.
-    - To query a single month, set start_date and end_date to the same value (e.g., '2025-01').
+    To query a single month, set start_date and end_date to the same value (e.g., '2025-01').
     """
     conn = db_connection()
     if not conn:
@@ -88,18 +100,18 @@ def get_crimes(
         params.append(specific_month)
 
     if crime_type:
-        where_clauses.append("crime_type = ?")
-        params.append(crime_type)
+        placeholders = ",".join("?" * len(crime_type))
+        where_clauses.append(f"crime_type IN ({placeholders})")
+        params.extend(crime_type)
 
     if borough:
-        where_clauses.append("borough = ?")
-        params.append(borough)
+        placeholders = ",".join("?" * len(borough))
+        where_clauses.append(f"borough IN ({placeholders})")
+        params.extend(borough)
 
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
     
-
-
     cursor = conn.cursor()
     cursor.execute(query, tuple(params))
     results = cursor.fetchall()
@@ -121,7 +133,7 @@ def get_borough_list():
     df = pd.read_sql_query(query, conn)
     conn.close()
     
-    # FIX: Return a dictionary, not a list
+    # Return a dictionary
     return {"boroughs": df['borough'].tolist()}
 
 
@@ -153,12 +165,14 @@ def get_summary(
         params.append(end_date)
 
     if crime_type:
-        where_clauses.append("crime_type = ?")
-        params.append(crime_type)
+        placeholders = ",".join("?" * len(crime_type))
+        where_clauses.append(f"crime_type IN ({placeholders})")
+        params.extend(crime_type)
 
     if borough:
-        where_clauses.append("borough = ?")
-        params.append(borough)
+        placeholders = ",".join("?" * len(borough))
+        where_clauses.append(f"borough IN ({placeholders})")
+        params.extend(borough)
 
     where_query_part = ""
     if where_clauses:
@@ -194,7 +208,7 @@ def get_summary_by_borough(
     borough: Optional[str] = None,
 ):
     """
-    Get crime counts grouped by borough for cholorpleth mapping.
+    Get crime counts grouped by borough for cholorpleth mapping
     """
     conn = db_connection()
     if not conn:
@@ -213,12 +227,14 @@ def get_summary_by_borough(
         params.append(end_date)
     
     if crime_type:
-        where_clauses.append("crime_type = ?")
-        params.append(crime_type)
+        placeholders = ",".join("?" * len(crime_type))
+        where_clauses.append(f"crime_type IN ({placeholders})")
+        params.extend(crime_type)
 
     if borough:
-        where_clauses.append("borough = ?")
-        params.append(borough)
+        placeholders = ",".join("?" * len(borough))
+        where_clauses.append(f"borough IN ({placeholders})")
+        params.extend(borough)
 
     where_query_part = ""
     if where_clauses:
@@ -240,6 +256,8 @@ def get_summary_by_borough(
 
     # Return as a list of dictionaries
     return [{'borough': row['borough'], 'count': row['count']} for row in results]
+
+
 @app.get("/trends")
 def get_trends(
     start_date: Optional[str] = None,
@@ -249,8 +267,9 @@ def get_trends(
     breakdown_by_type: bool = False
 ):
     """
+    DEPRECATED, trend analysis is not present in dashboard anymore
     Get a time-series trend of crime counts.
-    - Set breakdown_by_type=true to get counts for each crime type.
+    Set breakdown_by_type=true to get counts for each crime type.
     """
     conn = db_connection()
     if not conn:
@@ -270,12 +289,14 @@ def get_trends(
         params.append(end_date)
 
     if crime_type:
-        where_clauses.append("crime_type = ?")
-        params.append(crime_type)
+        placeholders = ",".join("?" * len(crime_type))
+        where_clauses.append(f"crime_type IN ({placeholders})")
+        params.extend(crime_type)
 
     if borough:
-        where_clauses.append("borough = ?")
-        params.append(borough)
+        placeholders = ",".join("?" * len(borough))
+        where_clauses.append(f"borough IN ({placeholders})")
+        params.extend(borough)
 
     where_query_part = ""
     if where_clauses:
@@ -323,11 +344,12 @@ def get_types():
 
 @app.get("/imd_scatter")
 def get_imd_scatter():
-    """Return IMD vs annualised crime rate per 1000 residents at LSOA level.
+    """
+    Return IMD vs annualised crime rate per 1000 residents at LSOA level.
     """
     global imd_scatter_cache
 
-    # Return cached result if we've already computed it
+    # Return cached result if already computed 
     if imd_scatter_cache is not None:
         return imd_scatter_cache
 
@@ -389,8 +411,14 @@ def get_imd_scatter():
 
 @app.get("/imd_deciles")
 def get_imd_deciles():
-    """Return mean annual crime rate per 1000 residents by IMD decile.
     """
+    Return mean annual crime rate per 1000 residents by IMD decile.
+    """
+
+    global imd_deciles_cache
+
+    if imd_deciles_cache is not None:
+        return imd_deciles_cache
 
     conn = db_connection()
     if not conn:
@@ -430,34 +458,34 @@ def get_imd_deciles():
             "avg_rate": r["avg_rate"],
         })
 
-    return deciles
+
+    imd_deciles_cache = deciles
+    return imd_deciles_cache
 
 
-# /correlation_results
-# Returns Pearson r between IMD rank and annual crime rate per 1000 residents foor each crime type, across non-outlier LSOAs.
-# Negative r means more deprived (lower rank) = higher crime rate.
 
 correlation_cache = None  # cached after first run 
 @app.get("/correlation_results")
 def get_correlation_results():
     """
     Pearson correlation between IMD rank and annualised crime rate per 1000
-    residents, broken down by crime type.
-    Only returns results where p < 0.05 and n >= 30 LSOAs.
-    Sorted by absolute r value descending (strongest first).
+    residents, broken down by crime type
+
+    Only returns results where p < 0.05 and n >= 30 LSOAs
+
+    Sorted by absolute r value descending (strongest first)
     """
     global correlation_cache
     if correlation_cache is not None:
         return correlation_cache
 
-    from scipy.stats import pearsonr
 
     conn = db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed.")
 
     try:
-        # How many years does the dataset span? annualise crime counts.
+        # annualise crime counts
         span_df = pd.read_sql(
             "SELECT (julianday(MAX(month) || '-01') - julianday(MIN(month) || '-01')) / 365.25 AS span FROM crimes",
             conn
@@ -478,8 +506,8 @@ def get_correlation_results():
 
     for c_type in crime_types:
         try:
-            # Per-LSOA: average IMD rank + annualised crime rate for this crime type.
-            # is_outlier = 0 excludes commercial/industrial LSOAs with tiny population that would skew the residential correlation.
+            # Per-LSOA: average IMD rank + annualised crime rate for this crime type
+            # is_outlier = 0 excludes commercial/industrial LSOAs with tiny population that would skew residential correlation
             query = f"""
                 SELECT
                     s.lsoa_code,
@@ -496,13 +524,13 @@ def get_correlation_results():
         except Exception:
             continue
 
-        # Need at least 30 data points for a meaningful correlation
+        # 30+ data points for a meaningful correlation
         if len(df) < 30:
             continue
 
         r_val, p_val = pearsonr(df["imd_rank"], df["annual_rate"])
 
-        # Drop non-significant results
+        # Drop  non-significant results
         if p_val >= 0.05:
             continue
 
@@ -530,15 +558,22 @@ def get_correlation_results():
     return correlation_cache
 
 
+seasonal_cache = None
 
-## Seasonal EP
-# Groups crimes by month (Jan, Feb, etc) across all years, to identify seasonal patterns.
 @app.get("/seasonal")
 def get_seasonal():
     """
-    Returns average monthly crime count per season per crime type.
-    Seasons: Spring (Mar-May), Summer (Jun-Aug), Autumn (Sep-Nov), Winter (Dec-Feb).
+    Returns average monthly crime count per season per crime type
+
+    Seasons: Spring (Mar-May), Summer (Jun-Aug), Autumn (Sep-Nov), Winter (Dec-Feb)
+
+    Results are cached after first call
     """
+    global seasonal_cache
+    
+    if seasonal_cache is not None:
+        return seasonal_cache
+    
     conn = db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed.")
@@ -572,7 +607,8 @@ def get_seasonal():
     
     result['avg_monthly_count'] = result['avg_monthly_count'].round(1)
 
-    return result.to_dict(orient='records')
+    seasonal_cache = result.to_dict(orient='records')
+    return seasonal_cache
 
 
 
@@ -586,7 +622,9 @@ def get_station_map_data():
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed.")
 
-    try: # Get all non-outlier LSOAs with their centroid coords + crime rates
+
+# Get all non-outlier LSOAs with their centroid coordinates + crime rates
+    try: 
         lsoas = pd.read_sql("""
             SELECT s.lsoa_code, s.annual_crime_rate_per_1000, AVG(c.latitude) as lat, AVG(c.longitude) as lon
             FROM lsoa_stats s 
@@ -602,6 +640,7 @@ def get_station_map_data():
     
     conn.close()
 
+    # vectorised haversine function to calculate distance btween station and LSOA centroids
     def haversine_vec(lat1, lon1, lat2, lon2):
         R = 6371000  
         dlat = np.radians(lat2 - lat1)
@@ -630,8 +669,8 @@ def get_station_map_data():
 def get_station_analysis():
     """
     Returns two datasets for RQ2 :
-    1) decay: weighted crime rate per distance band
-    2) by_crime_type: weighted crime rate near vs far for each crime type
+    - decay: weighted crime rate per distance band
+    - by_crime_type: weighted crime rate near vs far for each crime type
     """
 
     global station_analysis_cache
@@ -689,6 +728,27 @@ def get_station_analysis():
         by_type['avg_rate'] = (by_type['crime_count'] * 1000.0 / by_type['group_pop'] / DATASET_YEARS).round(2)
         by_type = by_type[['crime_type', 'near_station', 'avg_rate']]
 
+        # Density bands
+        density = pd.read_sql(f"""
+            SELECT
+                CASE
+                    WHEN stations_within_1km = 0       THEN '0'
+                    WHEN stations_within_1km BETWEEN 1 AND 3 THEN '1-3'
+                    WHEN stations_within_1km BETWEEN 4 AND 7 THEN '4-7'
+                    ELSE '8+'
+                END AS band,
+                ROUND(SUM(total_crimes) * 1000.0 / SUM(population) / {DATASET_YEARS}, 2) AS avg_rate,
+                COUNT(*) AS n_lsoas
+            FROM lsoa_stats
+            WHERE is_outlier = 0
+              AND is_london  = 1
+              AND stations_within_1km IS NOT NULL
+            GROUP BY band
+        """, conn)
+        density_band_order = ['0', '1-3', '4-7', '8+']
+        density['band'] = pd.Categorical(density['band'], categories=density_band_order, ordered=True)
+        density = density.sort_values('band').reset_index(drop=True)
+
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=f"Error querying station analysis data: {e}")
@@ -696,8 +756,9 @@ def get_station_analysis():
     conn.close()
 
     station_analysis_cache = {
-        "decay": decay.to_dict(orient='records'),
-        "by_crime_type": by_type.to_dict(orient='records'),
+            "decay": decay.to_dict(orient='records'),
+            "by_crime_type": by_type.to_dict(orient='records'),
+            "density_bands": density.to_dict(orient='records'),
     }
     return station_analysis_cache
 
@@ -707,8 +768,8 @@ def get_station_analysis():
 def get_park_analysis():
     """
     Returns two datasets for RQ4 :
-    1) decay: weighted crime rate per distance band to nearest park
-    2) by_crime_type: weighted crime rate near vs far park for each crime type
+    - decay: weighted crime rate per distance band to nearest park
+    - by_crime_type: weighted crime rate near vs far park for each crime type
     """
 
     global park_analysis_cache
@@ -760,9 +821,29 @@ def get_park_analysis():
               AND s.near_park IS NOT NULL
             GROUP BY c.crime_type, s.near_park
         """, conn)
-
         by_type['avg_rate'] = (by_type['crime_count'] * 1000.0 / by_type['group_pop'] / DATASET_YEARS).round(2)
         by_type = by_type[['crime_type', 'near_park', 'avg_rate']]
+
+        # Density bands
+        density = pd.read_sql(f"""
+            SELECT
+                CASE
+                    WHEN parks_within_1km = 0       THEN '0'
+                    WHEN parks_within_1km BETWEEN 1 AND 3 THEN '1-3'
+                    WHEN parks_within_1km BETWEEN 4 AND 7 THEN '4-7'
+                    ELSE '8+'
+                END AS band,
+                ROUND(SUM(total_crimes) * 1000.0 / SUM(population) / {DATASET_YEARS}, 2) AS avg_rate,
+                COUNT(*) AS n_lsoas
+            FROM lsoa_stats
+            WHERE is_outlier = 0
+              AND is_london  = 1
+              AND parks_within_1km IS NOT NULL
+            GROUP BY band
+        """, conn)
+        density_band_order = ['0', '1-3', '4-7', '8+']
+        density['band'] = pd.Categorical(density['band'], categories=density_band_order, ordered=True)
+        density = density.sort_values('band').reset_index(drop=True)
 
     except Exception as e:
         conn.close()
@@ -773,5 +854,83 @@ def get_park_analysis():
     park_analysis_cache = {
         "decay": decay.to_dict(orient='records'),
         "by_crime_type": by_type.to_dict(orient='records'),
+        "density_bands": density.to_dict(orient='records'),
     }
     return park_analysis_cache
+
+
+
+@app.get("/proximity_dots")
+def get_proximity_dots():
+    """
+    For RQ2/RQ4 proximity maps. Returns one row per London LSOA with pre-computed centroid coords, distances, and crime rate.
+    """
+    global proximity_dots_cache
+    if proximity_dots_cache is not None:
+        return proximity_dots_cache
+
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    try:
+        df = pd.read_sql("""
+            SELECT
+                lsoa_code,
+                distance_to_station_m,
+                distance_to_park_m,
+                annual_crime_rate_per_1000,
+                lat,
+                lon
+            FROM lsoa_stats
+            WHERE is_london  = 1
+              AND lat IS NOT NULL
+              AND lon IS NOT NULL
+        """, conn)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying proximity dots: {e}")
+    conn.close()
+
+    proximity_dots_cache = df.to_dict(orient='records')
+    return proximity_dots_cache
+
+
+@app.get("/parks")
+def get_parks():
+    """
+    Returns London park coordinates for the proximity map overlay.
+    A park is considered 'London' if it falls within bounding box of London LSOA centroids.
+    """
+
+    global parks_cache
+    if parks_cache is not None:
+        return parks_cache
+
+    conn = db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    try:
+        # Fetch parks
+        parks = pd.read_sql("SELECT name, lat, lon FROM parks", conn)
+        # Fetch London LSOA centroid bounds
+        bounds = pd.read_sql("""
+            SELECT MIN(lat) AS min_lat, MAX(lat) AS max_lat,
+                   MIN(lon) AS min_lon, MAX(lon) AS max_lon
+            FROM lsoa_stats
+            WHERE is_london = 1 AND lat IS NOT NULL AND lon IS NOT NULL
+        """, conn)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error querying parks: {e}")
+    conn.close()
+
+
+    # Filter parks to those within bounding box of London
+    b = bounds.iloc[0]
+    parks = parks[
+        (parks['lat'] >= b['min_lat']) & (parks['lat'] <= b['max_lat']) &
+        (parks['lon'] >= b['min_lon']) & (parks['lon'] <= b['max_lon'])
+    ]
+
+    parks_cache = parks.to_dict(orient='records')
+    return parks_cache

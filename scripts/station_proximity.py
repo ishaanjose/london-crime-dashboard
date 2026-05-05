@@ -1,10 +1,6 @@
 """
-station_proximity.py
-
 Computes distance from each London LSOA to its nearest TfL station
 and updates the lsoa_stats table. Then prints RQ2 results.
-
-Run once: python3 station_proximity.py
 """
 import sqlite3
 import time
@@ -12,9 +8,9 @@ import requests
 import numpy as np
 import pandas as pd
 
-DB_PATH = "street_crime.db"
+DB_PATH = "../data/street_crime.db"
 NEAR_THRESHOLD = 500   # metres
-YEARS = 3.0            # 36 months of data
+YEARS = 3.0            
 BATCH_SIZE = 50
 
 ARCGIS_URL = (
@@ -35,7 +31,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def fetch_centroids(lsoa_codes):
-    # ArcGIS LSOA boundary service. Batch the codes to stay under URL length limits.
+    # ArcGIS LSOA boundary service. Batch the codes to stay under URL length limits
     rows = []
     batches = [lsoa_codes[i:i + BATCH_SIZE] for i in range(0, len(lsoa_codes), BATCH_SIZE)]
     print(f"Fetching {len(lsoa_codes)} centroids in {len(batches)} batches...")

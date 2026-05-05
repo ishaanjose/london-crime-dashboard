@@ -3,16 +3,15 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html, Input, Output, State
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 import pandas as pd
 import json
 from dash import callback_context 
 
-# --- Configuration ---
 API_BASE_URL = "http://127.0.0.1:8000"  
-BOROUGH_GEOJSON_FILE = 'London Boroughs.geojson'
+BOROUGH_GEOJSON_FILE = '../data/London Boroughs.geojson'
 
-# --- Pre-load GeoJSON ---
 try:
     with open(BOROUGH_GEOJSON_FILE, 'r') as f:
         borough_geojson = json.load(f)
@@ -29,7 +28,7 @@ server = app.server
 
 # Add a Store component to cache the fetched data
 def create_filter_card():
-    """Creates the card containing all filters."""
+    """Create card containing all filters."""
     return dbc.Card(
         dbc.CardBody([
             html.H4("Crime filters", className="card-title"),
@@ -69,7 +68,7 @@ def create_filter_card():
             # Update Button
             dbc.Button("Apply Filters", id="apply-filters-button", color="primary", className="w-100"),
 
-            # Placeholders for the custom legend
+            # Placeholders for custom legend
             html.Hr(className="my-4"),
             html.H5("Map key", id="legend-title", className="card-title"),
             html.Div(
@@ -92,15 +91,29 @@ def create_map_card():
     return dbc.Card(
         dbc.CardBody([
             dbc.RadioItems(
-                id="map-type-selector",
-                options=[
-                    {"label": "Dot map", "value": "dot"},
-                    {"label": "Borough heatmap", "value": "choropleth"},
-                    {"label": "Station proximity", "value": "station_proximity"},
-                ],
-                value="dot", 
-                inline=True,
-                className="mb-3",
+                            id="map-type-selector",
+                            options=[
+                                {"label": "Dot map", "value": "dot"},
+                                {"label": "Choropleth Map", "value": "choropleth"},
+                                {"label": "Proximity", "value": "proximity"},
+                            ],
+                            value="dot",
+                            inline=True,
+                            className="mb-3",
+                        ),
+            html.Div(
+                dbc.RadioItems(
+                    id="proximity-target-selector",
+                    options=[
+                        {"label": "Stations", "value": "station"},
+                        {"label": "Parks", "value": "park"},
+                    ],
+                    value="station",
+                    inline=True,
+                    className="mb-2",
+                ),
+                id="proximity-target-wrapper",
+                style={"display": "none"}
             ),
             dcc.Loading(
                 id="loading-map",
@@ -116,7 +129,7 @@ def create_map_card():
     )
 
 def create_analysis_card():
-    """Creates the card for the analysis charts (pie, trend, borough, deprivation)."""
+    """Creates the card for the analysis charts (pie, trend, borough, deprivation)"""
     return dbc.Card(
         dbc.CardBody([
             html.H4("Crime analysis", className="card-title mb-3"),
@@ -147,9 +160,9 @@ def create_insights_section():
         {
             "rq": "RQ1",
             "color": "#6f42c1",
-            "question": "Is crime linked to deprivation?",
-            "finding": "Anti-social behaviour is about 3× higher in the poorest areas.",
-            "detail": "Looking at 10,225 LSOAs (after removing outliers), the data shows a weak-to-moderate negative link between IMD rank and annual crime rate. In short: more deprived areas tend to have higher crime, especially anti-social behaviour. The result is statistically significant, so it’s probably not just random noise.",
+            "question": "Does deprivation drive local crime rates?",
+            "finding": "Anti-social behaviour and drug offences are most closely linked to IMD rank.",
+            "detail": "Using 10,225 non-outlier LSOAs, I found a consistent negative correlation between IMD rank and crime. As deprivation increases (lower rank), crime rates per 1,000 residents go up. Anti-social behaviour (r=-0.44) and drugs (r=-0.44) showed the strongest links, suggesting deprivation is a major background driver for these specific categories in London.",
             "chart_id": "insight-chart-rq1",
             "modal_id": "modal-rq1",
             "btn_id": "btn-rq1",
@@ -157,9 +170,9 @@ def create_insights_section():
         {
             "rq": "RQ2",
             "color": "#d73027",
-            "question": "Does being close to TFL stations mean more crime?",
-            "finding": "Crime is around 3× higher within 500m of a TFL station.",
-            "detail": "Areas within 500m of a TFL station have much higher crime rates than areas farther away. Theft from the person and robbery jump the most, which fits with high footfall creating more opportunities. Still, urban density is probably affecting the result too.",
+            "question": "How do TfL stations affect spatial crime patterns?",
+            "finding": "Crime is 22% higher near stations, driven by opportunistic theft.",
+            "detail": "My analysis of 4,441 London LSOAs shows crime rates are 106.94 per 1,000 residents within 500m of a station, compared to 87.69 elsewhere. This 22% elevation is dominated by 'crimes of opportunity': theft from the person (+141%) and bike theft (+78%). This supports Routine Activity Theory, as transport hubs aggregate commuters in busy, unmonitored spaces.",
             "chart_id": "insight-chart-rq2",
             "modal_id": "modal-rq2",
             "btn_id": "btn-rq2",
@@ -167,9 +180,9 @@ def create_insights_section():
         {
             "rq": "RQ3",
             "color": "#e6841a",
-            "question": "Do crime patterns change across the seasons?",
-            "finding": "Bike theft spikes in summer; burglary gets worse in winter.",
-            "detail": "Over the 2.92-year dataset, summer sees big increases in bike theft and anti-social behaviour. Burglary is the opposite, peaking in winter — probably because of darker nights and more empty homes around the holidays. Robbery barely changes.",
+            "question": "Is there a clear seasonal cycle for crime?",
+            "finding": "Summer peaks for bike theft; winter peaks for burglary.",
+            "detail": "Looking at the full three-year dataset, distinct seasonal trends emerged. Bike theft spikes in summer (67.3% higher than winter), likely due to increased outdoor activity. Burglary is the opposite, peaking in winter, probably due to longer nights and homes being left empty over the Christmas period.",
             "chart_id": "insight-chart-rq3",
             "modal_id": "modal-rq3",
             "btn_id": "btn-rq3",
@@ -177,15 +190,14 @@ def create_insights_section():
         {
             "rq": "RQ4",
             "color": "#2b8a3e",
-            "question": "Do parks change local crime levels?",
-            "finding": "Coming soon — park proximity analysis is in progress.",
-            "detail": "This one checks whether crime rates are different near green spaces, using the same distance-based approach as RQ2. The analysis is still in progress.",
+            "question": "Do parks act as 'crime attractors'?",
+            "finding": "Proximity to parks correlates with an 11% increase in crime.",
+            "detail": "After correcting for non-London LSOA contamination, the data shows an 11% crime elevation within 500m of a park. Similar to stations, the effect is strongest for pedestrian-oriented crimes like bike theft (+70%) and theft from the person (+58%). Parks function as 'spatial convergence nodes' where high volumes of targets gather with minimal formal guardianship.",
             "chart_id": "insight-chart-rq4",
             "modal_id": "modal-rq4",
             "btn_id": "btn-rq4",
         },
     ]
-
     card_cols = []
     modals = []
 
@@ -244,7 +256,7 @@ def create_insights_section():
             )
         )
 
-        # Modal for this RQ
+        # Modal for RQ
         modals.append(
             dbc.Modal([
                 dbc.ModalHeader(
@@ -271,11 +283,10 @@ def create_insights_section():
                         children=dcc.Graph(
                             id=c['chart_id'],
                             figure={},
-                            style={'height': '420px'},
+                            style={'height': '720px'},
                             config={'displayModeBar': False}
                         )
-                    )
-                ]),
+                    )                ]),
                 dbc.ModalFooter(
                     dbc.Button("Close", id=f"close-{c['modal_id']}", color="secondary", size="sm")
                 )
@@ -327,7 +338,7 @@ app.layout = dbc.Container([
     Input('borough-dropdown', 'id') # Trigger on page load
 )
 def populate_boroughs(_):
-    """Fetches the list of boroughs from the API to populate the dropdown."""
+    """Fetches the list of boroughs from the API to populate the dropdown"""
     try:
         response = requests.get(f"{API_BASE_URL}/boroughs")
         response.raise_for_status() 
@@ -342,7 +353,7 @@ def populate_boroughs(_):
     Input('crime-type-dropdown', 'id') # Trigger on page load
 )
 def populate_crime_types(_):
-    """Fetches the list of crime types from the API to populate the dropdown."""
+    """Fetches the list of crime types from the API to populate the dropdown"""
     try:
         response = requests.get(f"{API_BASE_URL}/crime_types")
         response.raise_for_status()
@@ -385,14 +396,25 @@ def toggle_modal_rq3(open_click, close_click, is_open): return not is_open
 def toggle_modal_rq4(open_click, close_click, is_open): return not is_open
 
 @app.callback(
+    Output("proximity-target-wrapper", "style"),
+    Input("map-type-selector", "value"),
+)
+def toggle_proximity_target(map_type):
+    if map_type == "proximity":
+        return {"display": "block"}
+    return {"display": "none"}
+
+@app.callback(
     [Output("insight-chart-rq1", "figure"),
      Output("insight-chart-rq2", "figure"),
-     Output("insight-chart-rq3", "figure")],
+     Output("insight-chart-rq3", "figure"),
+     Output("insight-chart-rq4", "figure")],
     [Input("modal-rq1", "is_open"),
      Input("modal-rq2", "is_open"),
-     Input("modal-rq3", "is_open")]
+     Input("modal-rq3", "is_open"),
+     Input("modal-rq4", "is_open")]
 )
-def load_insight_charts(rq1_open, rq2_open, rq3_open):
+def load_insight_charts(rq1_open, rq2_open, rq3_open, rq4_open):
     empty = go.Figure()
     empty.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         margin=dict(l=10,r=10,t=10,b=10))
@@ -444,7 +466,8 @@ def load_insight_charts(rq1_open, rq2_open, rq3_open):
         except Exception as e:
             print(f"RQ2 insight chart error: {e}")
 
-    # RQ3 — seasonal line chart
+
+# RQ3: one mini-chart per crime type, coloured by peak season
     fig3 = empty
     if rq3_open:
         try:
@@ -452,18 +475,187 @@ def load_insight_charts(rq1_open, rq2_open, rq3_open):
             df = pd.DataFrame(data)
             season_order = ['Spring','Summer','Autumn','Winter']
             df['season'] = pd.Categorical(df['season'], categories=season_order, ordered=True)
-            fig3 = px.line(df.sort_values('season'), x='season', y='avg_monthly_count',
-                           color='crime_type', markers=True,
-                           title='Average monthly crime count by season',
-                           labels={'season':'Season','avg_monthly_count':'Avg monthly count',
-                                   'crime_type':'Crime type'})
-            fig3.update_layout(margin=dict(l=10,r=10,t=40,b=10))
+            df = df.sort_values(['crime_type', 'season'])
+
+            # Order by total volume (biggest first)
+            volume_order = (df.groupby('crime_type')['avg_monthly_count']
+                              .sum().sort_values(ascending=False).index.tolist())
+
+            # Per crime type peak season + % change min to max
+            stats = df.groupby('crime_type')['avg_monthly_count'].agg(['min', 'max', 'idxmax'])
+            stats['peak_season'] = df.loc[stats['idxmax']].set_index('crime_type')['season']
+            stats['pct_change'] = ((stats['max'] - stats['min']) / stats['min'] * 100).round(0).astype(int)
+
+            peak_season = stats['peak_season'].to_dict()
+            pct_change  = stats['pct_change'].to_dict()
+
+            # Map each crime to a label including the % change for the title
+            facet_label = {ct: f"{ct} (+{pct_change[ct]}%)" for ct in volume_order}
+
+            season_colors = {
+                'Spring': '#76b852',
+                'Summer': '#f39c12',
+                'Autumn': '#c0392b',
+                'Winter': '#2980b9',
+            }
+
+            fig3 = px.line(
+                df,
+                x='season',
+                y='avg_monthly_count',
+                color='crime_type',
+                facet_col='crime_type',
+                facet_col_wrap=4,
+                facet_col_spacing=0.04,
+                facet_row_spacing=0.12,
+                category_orders={
+                    'crime_type': volume_order,
+                    'season': season_order,
+                },
+                markers=True,
+                title='Seasonal pattern by crime type — coloured by peak season',
+                labels={'season': '', 'avg_monthly_count': ''},
+            )
+
+            # Recolour each line by its peak season; hide legend per crime
+            for trace in fig3.data:
+                pk = peak_season.get(trace.name)
+                colour = season_colors.get(pk, '#555')
+                trace.update(
+                    line=dict(color=colour, width=2.2),
+                    marker=dict(size=6, color=colour),
+                    showlegend=False,
+                )
+
+            # Replace facet titles with "<crime> (+X%)"
+            fig3.for_each_annotation(lambda a: a.update(
+                text=facet_label.get(a.text.split('=')[-1], a.text.split('=')[-1]),
+                font=dict(size=11),
+            ))
+
+            # Show x-axis tick labels on all facets 
+            fig3.update_xaxes(showticklabels=True, tickangle=-30, tickfont=dict(size=9))
+            fig3.update_yaxes(matches=None, showticklabels=True, tickfont=dict(size=9))
+
+            for season, colour in season_colors.items():
+                fig3.add_trace(go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(size=11, color=colour),
+                    name=season,                  
+                    showlegend=True,
+                    hoverinfo='skip',
+                ))
+
+            fig3.update_layout(
+                margin=dict(l=10, r=160, t=50, b=20),
+                height=760,
+                legend=dict(
+                    orientation='v',
+                    yanchor='top', y=1.0,
+                    xanchor='left', x=1.02,
+                    title=dict(text='<b>Peak season</b>', font=dict(size=11)),
+                    font=dict(size=10),
+                    bgcolor='rgba(255,255,255,0.85)',
+                    bordercolor='#ddd',
+                    borderwidth=1,
+                ),
+            )
         except Exception as e:
             print(f"RQ3 insight chart error: {e}")
+# RQ4 — three-panel: distance decay (top-left), density bands (top-right), per-crime-type near vs far (bottom, full width)
+    fig4 = empty
+    if rq4_open:
+        try:
+            data = requests.get(f"{API_BASE_URL}/park_analysis").json()
 
-    return fig1, fig2, fig3
+            fig4 = make_subplots(
+                rows=2, cols=2,
+                specs=[
+                    [{"type": "xy"}, {"type": "xy"}],
+                    [{"colspan": 2}, None],
+                ],
+                subplot_titles=(
+                    "Crime rate falls with distance from nearest park",
+                    "Crime rate rises with park density",
+                    "Per crime type: near (≤500m) vs far (>500m) from a park"
+                ),
+                vertical_spacing=0.28,
+                horizontal_spacing=0.12,
+                row_heights=[0.4, 0.6]
+            )
 
+            # Panel 1 — distance decay line
+            df_decay = pd.DataFrame(data['decay'])
+            band_order = ['0-250m','250-500m','500-750m','750-1000m','1000-1500m','+1500m']
+            df_decay['band'] = pd.Categorical(df_decay['band'], categories=band_order, ordered=True)
+            df_decay = df_decay.sort_values('band')
+            fig4.add_trace(
+                go.Scatter(
+                    x=df_decay['band'], y=df_decay['avg_rate'],
+                    mode='lines+markers',
+                    line=dict(color='#2b8a3e', width=2.5),
+                    marker=dict(size=8, color='#2b8a3e'),
+                    showlegend=False,
+                    hovertemplate='%{x}<br>%{y:.1f}/1k<extra></extra>'
+                ),
+                row=1, col=1
+            )
 
+            # Panel 2 — density bands bar
+            df_dens = pd.DataFrame(data['density_bands'])
+            band_order_dens = ['0','1-3','4-7','8+']
+            df_dens['band'] = pd.Categorical(df_dens['band'], categories=band_order_dens, ordered=True)
+            df_dens = df_dens.sort_values('band')
+            fig4.add_trace(
+                go.Bar(
+                    x=df_dens['band'], y=df_dens['avg_rate'],
+                    marker_color='#2b8a3e',
+                    showlegend=False,
+                    text=df_dens['avg_rate'].round(1),
+                    textposition='outside',
+                    hovertemplate='%{x} parks<br>%{y:.1f}/1k<extra></extra>'
+                ),
+                row=1, col=2
+            )
+
+            # Panel 3 — per-crime-type grouped bar
+            df_ct = pd.DataFrame(data['by_crime_type'])
+            df_ct['proximity'] = df_ct['near_park'].map({1: 'Near (≤500m)', 0: 'Far (>500m)'})
+            pivot = df_ct.pivot(index='crime_type', columns='proximity', values='avg_rate').fillna(0)
+            pivot['diff'] = pivot.get('Near (≤500m)', 0) - pivot.get('Far (>500m)', 0)
+            sorted_types = pivot.sort_values('diff', ascending=False).index.tolist()
+
+            for prox, color in [('Near (≤500m)', '#2b8a3e'), ('Far (>500m)', '#9aa0a6')]:
+                sub = df_ct[df_ct['proximity'] == prox]
+                sub = sub.set_index('crime_type').reindex(sorted_types).reset_index()
+                fig4.add_trace(
+                    go.Bar(
+                        x=sub['crime_type'], y=sub['avg_rate'],
+                        name=prox,
+                        marker_color=color,
+                        hovertemplate='%{x}<br>'+prox+': %{y:.2f}/1k<extra></extra>'
+                    ),
+                    row=2, col=1
+                )
+
+            fig4.update_xaxes(title_text="Distance from nearest park", row=1, col=1)
+            fig4.update_yaxes(title_text="Rate per 1,000", row=1, col=1)
+            fig4.update_xaxes(title_text="Parks within 1km", row=1, col=2)
+            fig4.update_yaxes(title_text="Rate per 1,000", row=1, col=2)
+            fig4.update_xaxes(tickangle=-40, row=2, col=1)
+            fig4.update_yaxes(title_text="Avg annual rate per 1,000 residents", row=2, col=1)
+
+            fig4.update_layout(
+                barmode='group',
+                margin=dict(l=10, r=10, t=60, b=10),
+                legend=dict(orientation='h', yanchor='bottom', y=-0.22, xanchor='center', x=0.5),
+                height=850
+            )
+        except Exception as e:
+            print(f"RQ4 insight chart error: {e}")
+
+    return fig1, fig2, fig3, fig4
 @app.callback(
     [Output('crime-map', 'figure'),
      Output('legend-title', 'children'),
@@ -471,7 +663,8 @@ def load_insight_charts(rq1_open, rq2_open, rq3_open):
      Output('cached-crime-data', 'data'),
      Output('cached-borough-data', 'data')],
     [Input('apply-filters-button', 'n_clicks'),
-     Input('map-type-selector', 'value')],
+     Input('map-type-selector', 'value'),
+     Input('proximity-target-selector', 'value')],
     [State('date-picker-range', 'start_date'),
      State('date-picker-range', 'end_date'),
      State('borough-dropdown', 'value'),
@@ -481,8 +674,8 @@ def load_insight_charts(rq1_open, rq2_open, rq3_open):
     prevent_initial_call=True
 )
 
-def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, crime_types, cached_crime_data, cached_borough_data):
-    """Fetch data on filter click OR use cache on view switch - render immediately!"""
+def update_map_and_cache(n_clicks, map_type, proximity_target, start_date, end_date, boroughs, crime_types, cached_crime_data, cached_borough_data):
+    """Fetch data on filter click or use cache on view switch"""
     
     empty_map_fig = go.Figure(go.Scattermapbox())
     empty_map_fig.update_layout(
@@ -496,7 +689,6 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
     ctx = callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
-    # If triggered by apply-filters-button, fetch fresh data
     if triggered_id == 'apply-filters-button':
         if not start_date or not end_date:
             return (empty_map_fig, "Map key", [], None, None)
@@ -556,86 +748,122 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
             title='Crime count by borough'
         )
         fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
-        legend_title = "Borough heatmap key"
+        legend_title = "Choropleth Map key"
         legend_content = html.P("Green = lower crime, red = higher crime", className="text-muted small")
-    elif map_type == 'station_proximity':
+
+    elif map_type == 'proximity':
+        # Fetch per-LSOA proximity data 
         try:
-            response = requests.get(f"{API_BASE_URL}/station_map_data")
+            response = requests.get(f"{API_BASE_URL}/proximity_dots")
             response.raise_for_status()
-            st_data = response.json()
+            prox_data = response.json()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching station map data: {e}")
-            empty_map_fig.update_layout(title="Couldn’t load station data")
-            return (empty_map_fig, "Map key", [], cached_crime_data, cached_borough_data)
+            print(f"Error fetching proximity dots: {e}")
+            empty_map_fig.update_layout(title="Couldn't load proximity data")
+            return (empty_map_fig, "Map key", [], crime_data, borough_data)
 
-        df_st = pd.DataFrame(st_data)
-        df_st = df_st[df_st.avg_rate_500 > 0]
+        df_p = pd.DataFrame(prox_data)
+        df_p = df_p[df_p['lat'].notna() & df_p['lon'].notna() & df_p['annual_crime_rate_per_1000'].notna()].copy()
 
-        # Normalise rate to 0-1 for colour scale
-        p95 = df_st.avg_rate_500.quantile(0.95)
-        df_st['norm'] = (df_st.avg_rate_500 / p95).clip(upper=1)
-        df_st['size'] = (df_st.norm * 18 + 6).round(1)
-        london_avg = round(float(df_st.avg_rate_500.mean()), 1)
-        df_st['diff'] = (df_st.avg_rate_500 - london_avg).round(1)
-        df_st['label'] = df_st.apply(
+        target = proximity_target or "station"
+        target_label = "TfL station" if target == "station" else "park"
+        dist_col = "distance_to_station_m" if target == "station" else "distance_to_park_m"
+
+        rate_p95 = float(df_p['annual_crime_rate_per_1000'].quantile(0.95))
+
+        # Create hover text
+        df_p['hover'] = df_p.apply(
             lambda r: (
-                f"<b>{r['name']}</b><br>"
-                f"Crime rate within 500m: <b>{r['avg_rate_500']}/1k</b><br>"
-                f"{'▲' if r['diff'] > 0 else '▼'} {abs(r['diff'])} vs London avg ({london_avg}/1k)"
+                f"<b>LSOA {r['lsoa_code']}</b><br>"
+                f"Crime rate: <b>{r['annual_crime_rate_per_1000']:.1f}/1k</b><br>"
+                f"Distance to nearest {target_label}: "
+                f"<b>{int(r[dist_col])}m</b>" if pd.notna(r[dist_col]) else "out of range"
             ),
             axis=1
         )
+
         fig_map = go.Figure()
 
-        # Station circles — coloured by avg crime rate
+        # Layer 1: LSOA crime rate dots
         fig_map.add_trace(go.Scattermapbox(
-            lat=df_st['lat'],
-            lon=df_st['lon'],
+            lat=df_p['lat'],
+            lon=df_p['lon'],
             mode='markers',
             marker=dict(
-                size=df_st['size'],
-                color=df_st['avg_rate_500'],
+                size=(df_p['annual_crime_rate_per_1000'] / rate_p95 * 14 + 4).clip(upper=20),
+                color=df_p['annual_crime_rate_per_1000'],
                 colorscale=[
-                    [0.0,  '#4575b4'],
-                    [0.25, '#74add1'],
-                    [0.5,  '#fee090'],
+                    [0.0,  '#abd9e9'],
+                    [0.25, '#fee090'],
+                    [0.5,  '#fdae61'],
                     [0.75, '#f46d43'],
                     [1.0,  '#a50026'],
                 ],
                 cmin=0,
-                cmax=float(p95),
+                cmax=rate_p95,
                 colorbar=dict(
-                    title='Avg crime rate<br>per 1,000',
+                    title=dict(text='Crime rate<br>per 1,000', font=dict(size=11)),
                     thickness=12,
-                    len=0.6,
+                    len=0.5,
+                    x=1.0,
                 ),
-                opacity=0.85,
+                opacity=0.78,
             ),
-            text=df_st['label'],
+            text=df_p['hover'],
             hoverinfo='text',
-            name='TFL Stations'
+            showlegend=False,
         ))
+
+        # Layer 2: stations or parks overlay
+        try:
+            if target == "station":
+                overlay_resp = requests.get(f"{API_BASE_URL}/station_map_data")
+                overlay_resp.raise_for_status()
+                overlay_df = pd.DataFrame(overlay_resp.json())
+                overlay_marker = dict(size=11, color='#1a4d8f', opacity=0.5)
+                overlay_name = 'TfL stations'
+            else:
+                overlay_resp = requests.get(f"{API_BASE_URL}/parks")
+                overlay_resp.raise_for_status()
+                overlay_df = pd.DataFrame(overlay_resp.json())
+                overlay_marker = dict(size=11, color='#1d6e1d', opacity=0.2)
+                overlay_name = 'London parks'
+
+            if not overlay_df.empty:
+                fig_map.add_trace(go.Scattermapbox(
+                    lat=overlay_df['lat'],
+                    lon=overlay_df['lon'],
+                    mode='markers',
+                    marker=overlay_marker,
+                    text=overlay_df.get('name', overlay_name),
+                    hoverinfo='text',
+                    name=overlay_name,
+                    showlegend=False,
+                ))
+        except requests.exceptions.RequestException as e:
+            print(f"Couldn't fetch overlay {target}: {e}")
 
         fig_map.update_layout(
             mapbox_style='carto-positron',
             mapbox_center={'lat': 51.5074, 'lon': -0.1278},
-            mapbox_zoom=9.5,
+            mapbox_zoom=9.3,
             margin={'r': 0, 't': 40, 'l': 0, 'b': 0},
-            title='Avg crime rate within 500m of TFL stations',
-            showlegend=False
+            title=f'Crime rate by LSOA · {target_label}s overlaid',
         )
 
-        legend_title = "Station proximity"
+        legend_title = f"{target_label.capitalize()} proximity"
         legend_content = html.Div([
-            html.P("Each dot is a TFL station", className="small text-muted"),
-            html.P("Color + size show avg crime rate inside 500m", className="small text-muted"),
-            html.P("Blue = lower crime → red = higher crime", className="small text-muted"),
+            html.P("Each dot is a London LSOA.", className="small text-muted mb-1"),
+            html.P("Larger and redder dots = higher crime rate per 1,000 residents.", className="small text-muted mb-1"),
+            html.P(
+                "Dark blue squares are TfL stations." if target == "station"
+                else "Small green dots are London parks (3,893 of them).",
+                className="small text-muted mb-1"
+            ),
+            html.P(f"Hover any dot for distance to nearest {target_label}.",
+                   className="small text-muted mb-0"),
         ])
-        return (fig_map, legend_title, legend_content, cached_crime_data, cached_borough_data)
-
-
-
-
+        return (fig_map, legend_title, legend_content, crime_data, borough_data)
     else:  # dot map
         if not crime_data:
             empty_map_fig.update_layout(title="No data yet — click Update")
@@ -680,7 +908,7 @@ def update_map_and_cache(n_clicks, map_type, start_date, end_date, boroughs, cri
      Input('cached-crime-data', 'data')]
 )
 def update_analysis_chart(view, cached_crime_data):
-    """Update the analysis chart based on selected view and cached data."""
+    """Update the analysis chart based on selected view and cached data"""
 
     empty_fig = go.Figure()
     empty_fig.update_layout(

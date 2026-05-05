@@ -2,8 +2,8 @@ import sqlite3
 
 import geopandas as gpd
 
-DB_PATH = "street_crime.db"
-KML_PATH = "tfl_train_stations.kml"
+DB_PATH = "../data/street_crime.db"
+KML_PATH = "../data/tfl_train_stations.kml"
 
 
 def load_stations_from_kml():

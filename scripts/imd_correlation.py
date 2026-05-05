@@ -5,19 +5,19 @@ from scipy.stats import pearsonr
 def calculate_normalized_correlations():
     """
     Calculates Pearson correlation between IMD Rank and Annualized Crime Rate.
-    Filters out commercial/low-population outliers.
+    Filters out commercial/low-population outliers
     """
-    conn = sqlite3.connect('street_crime.db')
+    conn = sqlite3.connect('../data/street_crime.db')
     
     # Identify unique crime types
     crime_types = pd.read_sql("SELECT DISTINCT crime_type FROM crimes", conn)['crime_type'].tolist()
     
-    # We append '-01' to the YYYY-MM strings.
+    # We append '-01' to the YYYY-MM strings for calculations which require full date
     span_query = "SELECT (julianday(MAX(month) || '-01') - julianday(MIN(month) || '-01')) / 365.25 as span FROM crimes"
     span_info = pd.read_sql(span_query, conn).iloc[0]
     
     raw_span = span_info['span']
-    # If the span is valid, use it, otherwise default to 1.0
+    # If span is valid, use it, otherwise default to 1.0
     span_years = raw_span if pd.notnull(raw_span) and raw_span > 0 else 1.0
 
     results = []
@@ -73,11 +73,10 @@ def analyze_normalized_deciles():
     Aggregates annualized crime rates by IMD Decile using lsoa_stats.
     Excludes outliers to show true residential socio-economic impact.
     """
-    conn = sqlite3.connect('street_crime.db')
+    conn = sqlite3.connect('../data/street_crime.db')
     
     print("\n--- Mean Annual Crime Rate by IMD Decile (Residential Only) ---")
     print(f"{'Decile':<10} | {'Avg Annual Rate/1000 Residents':<30}")
-    print("-" * 55)
     
     # We join lsoa_stats with a unique map of LSOA to Decile
     query = """

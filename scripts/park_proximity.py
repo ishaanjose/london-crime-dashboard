@@ -13,13 +13,13 @@ import requests
 import numpy as np
 import pandas as pd
 
-DB_PATH = "street_crime.db"
+DB_PATH = "../data/street_crime.db"
 NEAR_THRESHOLD = 500   # metres
-YEARS = 3.0            # 36 months of data
+YEARS = 3.0            
 BATCH_SIZE = 50
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-HEADERS = {"User-Agent": "LondonCrimeDashboard/1.0"}
+HEADERS = {"User-Agent": "LondonCrimeDashboard"}
 
 ARCGIS_URL = (
     "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/"
@@ -42,7 +42,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def fetch_centroids(lsoa_codes):
-    # ArcGIS LSOA boundary service. Batch the codes to stay under URL length limits.
+    # ArcGIS LSOA boundary service. Batch the codes to stay under URL length limits
     rows = []
     batches = [lsoa_codes[i:i + BATCH_SIZE] for i in range(0, len(lsoa_codes), BATCH_SIZE)]
     print(f"Fetching {len(lsoa_codes)} centroids in {len(batches)} batches...")
@@ -76,7 +76,7 @@ def fetch_parks():
     r = requests.post(OVERPASS_URL, data={"data": query}, headers=HEADERS, timeout=90)
     parks = []
     for e in r.json()["elements"]:
-        # Nodes have lat/lon directly; ways carry it on the 'center' field via 'out center'
+        # Nodes have lat/lon directly, carry it on the 'center' field via 'out center'
         lat = e.get("lat") or (e.get("center") or {}).get("lat")
         lon = e.get("lon") or (e.get("center") or {}).get("lon")
         name = (e.get("tags") or {}).get("name", "Unknown park")

@@ -15,6 +15,10 @@ endpoints = [
     "/imd_scatter",
     "/seasonal",
     "/correlation_results",
+    "/proximity_dots",
+    "/parks",
+    "/station_analysis",
+    "/park_analysis",
 ]
 
 print(f"{'Endpoint':<50} {'Time (ms)':>10} {'Result':>8}")

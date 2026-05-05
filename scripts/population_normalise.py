@@ -3,8 +3,8 @@ import pandas as pd
 import os
 
 
-DB_PATH = 'street_crime.db'
-POPULATION_PATH = 'lsoa_population_estimates.xlsx'
+DB_PATH = '../data/street_crime.db'
+POPULATION_PATH = '../data/lsoa_population_estimates.xlsx'
 
 def normalise_crime_by_population():
     """

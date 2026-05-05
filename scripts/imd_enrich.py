@@ -2,9 +2,9 @@ import sqlite3
 import pandas as pd
 import os
 
-DB_PATH = 'street_crime.db'
-IMD_PATH = 'indices_of_deprivation.csv'
-LOOKUP_PATH = 'lsoa11_to_lsoa21_lookup.csv' 
+DB_PATH = '../data/street_crime.db'
+IMD_PATH = '../data/indices_of_deprivation.csv'
+LOOKUP_PATH = '../data/lsoa11_to_lsoa21_lookup.csv' 
 
 
 def integrate_imd():
